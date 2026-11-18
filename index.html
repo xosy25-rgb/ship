@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>船舶情報</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="船舶情報">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#ffffff">
+<script>
+// google.script.run の代わり：Apps Script の exec に ?api=関数名&args=[...] で聞いて、JSON の答えを受け取る
+(function () {
+  var API = 'https://script.google.com/macros/s/AKfycbzlXVJRhoVGk8d5vB60dfH8G_AtYYFf0spOBj3ECw1mhPLoRI4_lw-15rxcbkhYp-TyPA/exec';
+  function call(name, args, ok, ng) {
+    var url = API + '?api=' + encodeURIComponent(name) + '&args=' + encodeURIComponent(JSON.stringify(args)) + '&t=' + Date.now();
+    fetch(url, { redirect: 'follow', cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (j) { if (j && j.ok) { if (ok) ok(j.result); } else if (ng) ng(new Error((j && j.error) || '不明なエラー')); })
+      .catch(function (e) { if (ng) ng(new Error('通信できませんでした（' + (e && e.message || e) + '）')); });
+  }
+  function runner(ok, ng) {
+    return new Proxy({}, { get: function (_, k) {
+      if (k === 'withSuccessHandler') return function (f) { return runner(f, ng); };
+      if (k === 'withFailureHandler') return function (f) { return runner(ok, f); };
+      return function () { call(String(k), Array.prototype.slice.call(arguments), ok, ng); };
+    } });
+  }
+  window.google = { script: { get run() { return runner(null, null); } } };
+})();
+</script>
+<style>
+  :root {
+    --bg: #f3f5f8;
+    --card: #ffffff;
+    --text: #18212e;
+    --sub: #667085;
+    --line: #e4e8ee;
+    --accent: #1f5fa8;
+    --accent-soft: #e6eef8;
+    --red: #d1342f;
+    --red-soft: #fdecea;
+    --gas: #b25e09;
+    --gas-soft: #fdf1e3;
+    --past: #a0a8b4;
+    --green: #1e8a4c;
+    --green-soft: #e3f4ea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f141b;
+      --card: #18202b;
+      --text: #e6ebf2;
+      --sub: #94a0b0;
+      --line: #273242;
+      --accent: #6aa5ec;
+      --accent-soft: #1d2c40;
+      --red: #ff6b63;
+      --red-soft: #3a1f1e;
+      --gas: #f0a75a;
+      --gas-soft: #362818;
+      --past: #5c6676;
+      --green: #5fd08f;
+      --green-soft: #173323;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { overscroll-behavior-y: contain; scrollbar-gutter: stable; } /* ブラウザ自体の引っ張り更新と重ならないようにする */
+  /* 下に引っ張って更新 */
+  #ptr { position: fixed; left: 0; right: 0; top: 0; z-index: 30; display: flex; justify-content: center;
+    pointer-events: none; transform: translateY(-60px); transition: transform .2s; }
+  #ptr .bubble { margin-top: 10px; background: var(--card); color: var(--accent); border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 14px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+  #ptr .arrow { display: inline-block; transition: transform .15s; }
+  #ptr.ready .arrow { transform: rotate(180deg); }
+  #ptr.loading .arrow { animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+    font-size: 15px; line-height: 1.45; -webkit-text-size-adjust: 100%; }
+
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg);
+    padding: 12px 16px 0; border-bottom: 1px solid var(--line); }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .02em; }
+  .meta { font-size: 11px; color: var(--sub); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 取得の日付・時刻（見やすく） */
+  .meta .got { display: flex; align-items: baseline; gap: 6px; color: var(--text); }
+  .meta .ago { align-self: center; flex: none; }
+  .meta .gd { font-size: 15px; font-weight: 700; }
+  .meta .gt { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+  .meta .gl { font-size: 13px; color: var(--sub); }
+  .meta .ago { font-size: 12px; font-weight: 700; color: var(--sub); background: var(--line); border-radius: 999px; padding: 1px 8px; margin-left: 2px; }
+  .meta .ago.late { background: #fff3cd; color: #8a6300; }
+  .meta .ago.old { background: #fde2e1; color: #b3261e; }
+  .meta .msrc { font-size: 10px; line-height: 1.25; color: var(--sub); min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    align-self: center; margin-left: 2px; }
+  button.reload { border: 1px solid var(--line); background: var(--card); color: var(--accent);
+    border-radius: 999px; padding: 7px 14px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  button.reload:disabled { opacity: .5; }
+  /* メニューのボタン（☰）：押しやすいように大きめ */
+  button.menubtn { width: 52px; height: 46px; border: 1px solid var(--line); background: var(--card); border-radius: 12px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; cursor: pointer;
+    padding: 0; margin: -4px -4px -4px 0; touch-action: manipulation; }
+  button.menubtn span { display: block; width: 24px; height: 3px; border-radius: 2px; background: var(--accent); }
+  button.menubtn:active { background: var(--bg); }
+
+  nav { display: flex; gap: 4px; margin-top: 10px; }
+  nav button { flex: 1; border: 0; background: transparent; color: var(--sub); font-size: 15px; font-weight: 600;
+    padding: 10px 4px 9px; border-bottom: 3px solid transparent; cursor: pointer; }
+  nav button.on { color: var(--accent); border-bottom-color: var(--accent); }
+  nav .count { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent); font-size: 12px; line-height: 20px; }
+  /* 2段：上は「本日」（横いっぱい）、下は今までの港のタブ */
+  nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; row-gap: 2px; }
+  nav button[data-tab="td"] { grid-column: 1 / -1; grid-row: 2; padding: 7px 4px 6px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--card, #fff); margin: 6px 0 4px; }
+  nav button[data-tab="td"].on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  nav button[data-tab="td"].on .count { background: rgba(255,255,255,.25); color: #fff; }
+
+  main { padding: 12px 16px 40px; max-width: 720px; margin: 0 auto; }
+  .panel { display: none; }
+  .panel.on { display: block; }
+
+  .port { background: var(--card); border: 1px solid var(--line); border-radius: 14px; margin-bottom: 14px; overflow: hidden; }
+  .port h2 { font-size: 16px; margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .empty { padding: 12px 14px; color: var(--sub); font-size: 14px; }
+  /* 日付の見出し：本日は濃い帯、明日は薄い帯、明後日以降は灰色の帯 */
+  .day { display: flex; align-items: baseline; gap: 8px; padding: 6px 14px; font-size: 13px; font-weight: 700;
+    color: var(--sub); background: var(--bg); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .day .d { font-weight: 400; font-size: 12px; }
+  .day .wk { font-size: 11px; font-weight: 600; margin-left: 1px; opacity: .85; } /* 本日・明日の日付の右の曜日 */
+
+  .day .sun { margin-left: auto; font-weight: 600; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .day.today { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .day.tomorrow { background: var(--accent-soft); color: var(--accent); }
+  .port h2 + .day, .port h2 + .dgrp > .day { border-top: 0; }
+  /* 本日・明日：見出しと船を大きめに */
+  /* 文字の大きさ：本日＝大（中より少し大きい）・明日＝中・明後日以降＝小（小さめ） */
+  .dgrp.tomorrow > .day { font-size: 15px; padding: 8px 14px; }
+  .dgrp.tomorrow > .day .d { font-size: 13px; }
+  .dgrp.tomorrow > .day .wk { font-size: 12px; }
+  .dgrp.tomorrow .ship { padding: 11px 14px 12px; }
+  .dgrp.tomorrow .name { font-size: 16px; }
+  .dgrp.tomorrow .times { font-size: 15px; }
+  .dgrp.today > .day { font-size: 16px; padding: 9px 14px; }
+  .dgrp.today > .day .d { font-size: 14px; }
+  .dgrp.today > .day .wk { font-size: 13px; }
+  .dgrp.today .ship { padding: 12px 14px 13px; }
+  .dgrp.today .name { font-size: 17px; }
+  .dgrp.today .bisan { font-size: 14px; }
+  .dgrp.today .times { font-size: 16px; }
+  .dgrp.today .row2 { font-size: 14px; }
+  .dgrp.far > .day { font-size: 12px; padding: 5px 14px; }
+  .dgrp.far > .day .d { font-size: 11px; }
+  .dgrp.far > .day .wk { font-size: 10px; }
+  .dgrp.far .ship { padding: 7px 14px 8px; }
+  .dgrp.far .name { font-size: 13px; }
+  .dgrp.far .bisan { font-size: 11px; }
+  .dgrp.far .times { font-size: 12px; padding: 4px 8px; margin-top: 4px; }
+  .dgrp.far .row2 { font-size: 11px; }
+  .dgrp.far .kind, .dgrp.far .badge { font-size: 10px; }
+  .dgrp.far .berth { font-size: 11px; }
+  /* 明後日以降：前との間を空ける（背景の色の帯） */
+  .dgrp.farfirst { border-top: 14px solid var(--bg); }
+  .dgrp.far + .dgrp.far { border-top: 8px solid var(--bg); }
+  .dgrp.far > .day { border-top-color: transparent; }
+  .day + .ship { border-top: 0; }
+
+  .ship { padding: 9px 14px 10px; border-top: 1px solid var(--line); }
+  .day + .ship { border-top: 0; }
+  .row1 { display: flex; align-items: baseline; gap: 10px; }
+  .time { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 46px; }
+  .name { font-weight: 600; word-break: break-word; flex: 1; }
+  .row2 { margin-left: 56px; color: var(--sub); font-size: 13px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; border-radius: 6px; padding: 1px 7px; line-height: 18px; }
+  .b3t { background: var(--red-soft); color: var(--red); }
+  .b1t { background: var(--accent-soft); color: var(--accent); }
+  .bsize { background: var(--accent-soft); color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  .times { margin: 6px 0 0 56px; padding: 6px 10px; border-radius: 8px; font-size: 13px;
+    background: var(--accent-soft); display: flex; flex-wrap: wrap; gap: 2px 14px; }
+  .times.gas { background: var(--gas-soft); }
+  .times b { font-variant-numeric: tabular-nums; }
+  /* 出港の位置がずれないよう、入港の欄の幅を固定する */
+  .times > span:first-child { min-width: 9em; }
+  .times b.late { color: var(--red); }
+  .badge.bnew { background: var(--green-soft); color: var(--green); }
+  .badge.bchg { background: var(--red-soft); color: var(--red); }
+  /* 同じ岸壁の出入れ（1枚のカード） */
+  .swapcard { --sw: #6a4fc2; --sw-soft: #f1ecfc; box-shadow: inset 3px 0 0 var(--sw); padding-top: 0; }
+  @media (prefers-color-scheme: dark) { .swapcard { --sw: #a990f0; --sw-soft: #251f38; } }
+  .swapcard.over { --sw: var(--red); --sw-soft: var(--red-soft); }
+  .swaphead { display: flex; align-items: center; gap: 6px; margin: 0 -14px 8px; padding: 7px 14px;
+    background: var(--sw-soft); color: var(--sw); font-weight: 700; font-size: 14px; }
+  .overtag { font-size: 11px; background: var(--red); color: #fff; border-radius: 5px; padding: 0 6px; }
+  .swaplabel { display: inline-block; font-size: 11px; font-weight: 700; color: var(--sw); border: 1px solid var(--sw);
+    border-radius: 5px; padding: 0 6px; margin-bottom: 4px; }
+  .swappart { padding: 2px 0; }
+  .swappart.changed, .swappart.new { box-shadow: none; }
+  .swaparrow { margin: 8px 0; padding: 4px 10px; font-size: 12px; font-weight: 700; color: var(--sw);
+    border-top: 1px dashed var(--sw); border-bottom: 1px dashed var(--sw); text-align: center; }
+  .chg { margin-top: 6px; font-size: 12px; color: var(--red); line-height: 1.5; }
+  .chg s { color: var(--sub); }
+  .ship.changed { box-shadow: inset 3px 0 0 var(--red); }
+  .ship.new { box-shadow: inset 3px 0 0 var(--green); }
+  .kind.west { background: var(--gas-soft); color: var(--gas); }
+  .src { font-size: 11px; font-weight: 700; color: var(--gas); background: var(--gas-soft); border-radius: 5px; padding: 0 5px; }
+
+  .dep { text-align: right; }
+  .dep .when { font-size: 11px; color: var(--sub); display: block; line-height: 1.2; }
+  .dep .clock { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--accent); }
+  .ship.past .name, .ship.past .time, .ship.past .clock { color: var(--past); }
+  .ship.past .clock { text-decoration: line-through; }
+  .pasttag { font-size: 11px; color: var(--past); }
+
+  .wind { font-size: 12px; font-weight: 700; border-radius: 6px; padding: 2px 8px; margin-left: 8px; vertical-align: 2px; }
+  button.wind { font-family: inherit; border: 0; cursor: pointer; display: inline-flex; align-items: center; line-height: 1.4; }
+  .winddetail { padding: 10px 14px; font-size: 13px; line-height: 1.6; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .winddetail .wd-time { color: var(--sub); font-size: 12px; margin-left: 6px; }
+  .wtl-cap { margin-top: 6px; font-size: 11px; color: var(--sub); }
+  .wtl-wrap { overflow-x: auto; margin-top: 3px; }
+  .wtl { border-collapse: collapse; width: 100%; min-width: 300px; table-layout: fixed; text-align: center; font-variant-numeric: tabular-nums; }
+  .wtl th { font-size: 11px; font-weight: 600; color: var(--sub); padding: 2px 0; line-height: 1.2; vertical-align: bottom; }
+  .wtl th small { display: block; font-size: 9px; color: var(--accent); }
+  .wtl td { padding: 4px 0; border-top: 1px solid var(--line); line-height: 1.2; }
+  .wtl td .arr { display: block; font-size: 16px; color: var(--accent); }
+  .wtl td b { font-size: 12px; }
+  .wtl.wide { width: auto; min-width: 0; }
+  .wtl.wide th, .wtl.wide td { width: 34px; min-width: 34px; }
+  .wtl td .arr.calm { font-size: 10px; height: 16px; }
+  .wtl th.now, .wtl td.now { background: var(--accent-soft); }
+  .wtl th.now { color: var(--accent); }
+  .wtl td.yel { background: #fff1c2; } .wtl td.red { background: var(--red-soft); color: var(--red); }
+  @media (prefers-color-scheme: dark) { .wtl td.yel { background: #4a3a0c; } }
+  .winddetail .wd-note { color: var(--sub); font-size: 11px; margin-top: 4px; }
+  .wind.advisory { background: #fff1c2; color: #8a5a00; }
+  .wind.warning { background: var(--red); color: #fff; }
+  @media (prefers-color-scheme: dark) { .wind.advisory { background: #4a3a0c; color: #ffd76a; } }
+  .notice { background: #fff6dc; color: #7a5600; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px; }
+  @media (prefers-color-scheme: dark) { .notice { background: #3a2f10; color: #f0cf7a; } }
+  .error { background: var(--red-soft); color: var(--red); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px; }
+  .loading { text-align: center; color: var(--sub); padding: 40px 0; }
+  .note { color: var(--sub); font-size: 12px; margin: 4px 2px 0; }
+  .actions { display: flex; gap: 6px; }
+  .bisan { font-weight: 400; font-size: 13px; color: var(--sub); margin-left: 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  /* 設定 */
+  .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 20; display: none; align-items: flex-end; justify-content: center; }
+  .sheet-bg.on { display: flex; }
+  .sheet { background: var(--card); width: 100%; max-width: 520px; border-radius: 16px 16px 0 0; padding: 18px 16px 24px; max-height: 88vh; overflow-y: auto; }
+  .sheet h4 { margin: 14px 0 8px; font-size: 14px; color: var(--accent); }
+  .ship.past .name, .ship.past .times b { color: var(--past); }
+  a.mt { color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
+  /* 入港・出港のラベル（在港と同じ形の札） */
+  .kind.tin { background: #dcefe3; color: #1d7a45; }
+  .kind.tout { background: #fde4d4; color: #b4501a; }
+  @media (prefers-color-scheme: dark) { .kind.tin { background: #173323; color: #5fd08f; } .kind.tout { background: #3d2415; color: #f29a62; } }
+  .ship.past .kind.tin, .ship.past .kind.tout { opacity: .6; }
+  /* 沖待ち（入港済みで出港予定がまだない船）：船名の左（在港の代わり） */
+  .kind.wait { background: #e6e0f7; color: #5b3fb5; }
+  @media (prefers-color-scheme: dark) { .kind.wait { background: #2a2342; color: #b9a6f5; } }
+  /* 本日タブ */
+  .tdday { font-size: 13px; color: var(--sub); font-weight: 600; margin-left: 8px; }
+  .tdr { display: flex; align-items: center; gap: 6px; padding: 9px 12px; border-top: 1px solid var(--line); font-size: 14px; }
+  .tdt { flex: none; width: 3.1em; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .tdt small { display: block; font-size: 10px; font-weight: 600; color: var(--sub); }
+  .tdio { flex: none; font-size: 11px; font-weight: 700; border-radius: 4px; padding: 1px 5px; }
+  .tdr.in .tdio { background: #dcefe3; color: #1d7a45; }
+  .tdr.out .tdio { background: #fde4d4; color: #b4501a; }
+  .tdp { flex: none; font-size: 11px; font-weight: 700; border-radius: 4px; padding: 1px 5px; background: var(--line); color: var(--sub); }
+  .tdp.p-hh { background: #e3e8fb; color: #3047a8; }
+  .tdp.p-hm { background: #efe3f7; color: #7a3aa0; }
+  .tdp.p-skm { background: #e0eef9; color: #1f5f99; }
+  .tdp.p-mz { background: #def3f1; color: #17786e; }
+  .tdn { flex: 1; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tds { flex: none; font-size: 11px; color: var(--sub); display: flex; gap: 3px; align-items: center; }
+  .tdr.soon { background: var(--gas-soft); }
+  .tdr.soon .tdt { color: var(--accent); }
+  .tdr.done { opacity: .5; }
+  .tdpastb { display: block; width: 100%; text-align: left; padding: 11px 12px; font-size: 14px; font-weight: 700; color: var(--sub);
+    background: none; border: 0; border-top: 1px solid var(--line); cursor: pointer; font-family: inherit; }
+  /* 縦にそろえる：時刻は右そろえ、入港／出港と港の札は同じ幅 */
+  .tdt { width: 3em; text-align: right; }
+  .tdio { width: 2.9em; text-align: center; box-sizing: content-box; }
+  .tdp { width: 3.3em; text-align: center; box-sizing: content-box; }
+  .tdr { cursor: pointer; }
+  .ship.jumped { animation: jumped 1s ease-out; }
+  @keyframes jumped { 0%, 60% { box-shadow: inset 0 0 0 3px var(--accent); background: var(--accent-soft); } 100% { box-shadow: inset 0 0 0 0 transparent; } }
+  /* 開局時間（目安表） */
+  .kkseg { display: flex; gap: 6px; margin: 2px 0 6px; }
+  .kkseg button { flex: 1; padding: 5px 4px; font-size: 14px; font-weight: 700; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--bg); color: var(--sub); font-family: inherit; }
+  .kkseg button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .kksub { font-size: 12px; color: var(--sub); margin: 4px 0 6px; }
+  table.kk { width: 100%; border-collapse: collapse; margin: 0 0 6px; font-variant-numeric: tabular-nums; }
+  table.kk th, table.kk td { border: 1px solid var(--line); padding: 5px 2px; text-align: center; font-size: 15px; }
+  table.kk thead th { font-size: 13px; background: var(--bg); line-height: 1.2; }
+  table.kk thead th small { display: block; font-size: 9.5px; font-weight: 500; color: var(--sub); }
+  table.kk tbody th { font-size: 13px; text-align: left; padding-left: 6px; white-space: nowrap; background: var(--bg); }
+  table.kk td { font-weight: 700; }
+  table.kk th.kin { color: #1d7a45; } table.kk th.kout { color: #b4501a; }
+  table.kk th.kdir, .kdirm { background: #ffe2a8; color: #7a4a00; }
+  .kkdir { display: inline-block; font-size: 8.5px; line-height: 1.05; font-weight: 700; margin-left: 3px; vertical-align: middle; text-align: left; } /* DIR＋15分（2段で小さく） */
+  .kdirm { border-radius: 4px; padding: 0 4px; font-weight: 700; }
+  .kk0 { color: var(--line); font-weight: 400; }
+  table.kk td { cursor: pointer; }
+  table.kkplain td { cursor: default; }
+  table.kkplain { table-layout: fixed; }                 /* 下の2つの表は列の幅をそろえる（見出し 36%・数字 32%ずつ） */
+  table.kkplain tr > :first-child { width: 36%; }
+  table.kk td.kkline { background: #e6effb; }
+  table.kk td.kksel { background: var(--accent); color: #fff; box-shadow: inset 0 0 0 2px var(--accent); font-size: 17px; }
+  table.kk th.kkhead { background: var(--accent); color: #fff; }
+  table.kk th.kkhead small { color: #fff; }
+  @media (prefers-color-scheme: dark) { table.kk td.kkline { background: #1b2a44; } }
+  .kkclose { margin: 10px 0 4px; }
+  .kknotes { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+  .kknotes p { font-size: 12.5px; line-height: 1.5; margin: 0 0 6px; padding-left: 1.4em; text-indent: -1.4em; }
+  @media (prefers-color-scheme: dark) { table.kk th.kdir, .kdirm { background: #4a3608; color: #ffd98a; } table.kk th.kin { color: #5fd08f; } table.kk th.kout { color: #f2a06b; } }
+  .tdnow { position: relative; height: 22px; margin: 2px 0; }
+  .tdnow::before { content: ''; position: absolute; left: 0; right: 0; top: 11px; border-top: 2px solid var(--red); }
+  .tdnow span { position: absolute; left: 10px; top: 2px; background: var(--red); color: #fff; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 8px; }
+  @media (prefers-color-scheme: dark) {
+    .tdr.in .tdio { background: #173323; color: #5fd08f; } .tdr.out .tdio { background: #3a2316; color: #f2a06b; }
+    .tdp.p-hh { background: #1d2547; color: #9fb0f5; } .tdp.p-hm { background: #2e1d3a; color: #d1a6ee; }
+    .tdp.p-skm { background: #16283a; color: #8cc0ef; } .tdp.p-mz { background: #12302d; color: #6fd3c6; }
+  }
+  /* 姫路タブ：飾磨の船（姫路の欄にまとめて出す） */
+  .kind.skm { background: #e0eef9; color: #1f5f99; border: 1px solid #9cc3e6; }
+  @media (prefers-color-scheme: dark) { .kind.skm { background: #16283a; color: #8cc0ef; border-color: #2f5578; } }
+  /* 入港岸壁（入出港時間の欄の右端） */
+  select.berth { margin-left: auto; font: inherit; font-size: 12px; font-weight: 700; color: var(--sub);
+    background: var(--card); border: 1px dashed var(--line); border-radius: 6px; padding: 1px 4px; -webkit-appearance: none; appearance: none; }
+  select.berth.set { color: #fff; background: var(--accent); border: 1px solid var(--accent); }
+  /* 今の風（アメダス） */
+  .windnow { display: inline-flex; align-items: center; gap: 2px; margin-left: 8px; padding-left: 8px;
+    border-left: 1px solid currentColor; font-variant-numeric: tabular-nums; color: inherit; }
+  .windnow small { font-size: 10px; font-weight: 600; }
+  .windnow .arr { display: inline-block; font-size: 14px; line-height: 1; }
+  .windnow .arr.calm { font-size: 10px; }
+  /* 水島：泊数 */
+  .times.mz { align-items: center; }
+  /* 水島：入港・出港・泊数を一列に収める（折り返さない） */
+  .times.mz { flex-wrap: nowrap; white-space: nowrap; gap: 0 6px; padding: 6px 7px; }  /* iPhone 16 Pro（幅402px）で本日の大きさのまま一列に入るように */
+  .times.mz > span { flex: none; }                  /* 縮めて文字が重ならないように */
+  .times.mz > span:first-child { min-width: 0; }
+  .times.mz .nights { flex: none; padding: 0 3px; margin-left: auto; }
+  .times.mz .ipt, .times.mz .psrc { margin-left: 2px; }
+  .times.mz .ipt { padding: 0 3px; }
+  /* 小さな札も文字の大きさに合わせて縮む（一列に収めるとき） */
+  .times.mz .ipt { font-size: .75em; }
+  /* 水島：入港（緑）と出港（オレンジ）を札で分ける */
+  .times.mz .lbl { display: inline-block; font-size: .78em; font-weight: 700; border-radius: 4px; padding: 1px 4px; margin-right: 4px; vertical-align: 1px;
+    color: var(--sub); }                                   /* 色なし（今の船に関係ないほう） */
+  .times.mz .lin { background: #dcefe3; color: #1d7a45; }
+  .times.mz .lout { background: #fde4d4; color: #b4501a; }
+  .times.mz .ipt.done { background: none; color: var(--sub); font-size: .85em; margin-left: 0; padding: 0; } /* 入港 済み */
+  @media (prefers-color-scheme: dark) {
+    .times.mz .lin { background: #173323; color: #5fd08f; }
+    .times.mz .lout { background: #3d2415; color: #f29a62; }
+  }
+  .times.mz .psrc { font-size: .68em; }
+  .times.mz .kind { font-size: .8em; padding: 1px 4px; margin-left: 2px; }
+  .times.mz .nights { font-size: .76em; }
+  .dgrp.today .times.mz { font-size: 14px; }
+  .dgrp.tomorrow .times.mz { font-size: 13.5px; }
+  .nights { margin-left: auto; font-size: 11px; font-weight: 700; color: var(--accent); background: var(--card);
+    border: 1px solid var(--accent); border-radius: 5px; padding: 0 6px; }
+  .kind.lng { background: #e3f1f6; color: #1d6f8c; }
+  /* 水島：出港時刻がポートラジオのとき */
+  .ipt { margin-left: 4px; font-size: 10px; font-weight: 700; color: #1d6f8c; background: #e3f1f6; border-radius: 3px;
+    padding: 0 4px; vertical-align: 1px; }
+  .psrc { margin-left: 4px; font-size: 9px; font-weight: 700; color: var(--muted, #888); border: 1px solid currentColor;
+    border-radius: 3px; padding: 0 3px; vertical-align: 1px; }
+  @media (prefers-color-scheme: dark) { .kind.lng { background: #13303a; color: #6cc3e0; } }
+  .kind.lpg { background: var(--gas-soft); color: var(--gas); }
+  .kind.wgo { margin: 0 0 0 6px; vertical-align: 1px; } /* 出港時間の右の「西行」 */
+  .kind { font-size: 11px; font-weight: 700; border-radius: 6px; padding: 1px 6px; margin-right: 6px; vertical-align: 1px; background: var(--line); color: var(--sub); }
+  .sheet h3 { margin: 0 0 4px; font-size: 17px; }
+  .sheet .sub { color: var(--sub); font-size: 13px; margin: 0 0 14px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+  .hm { display: flex; align-items: center; gap: 6px; font-size: 15px; }
+  .hm input { width: 64px; font-size: 17px; padding: 8px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--text); text-align: center; }
+  .hm select { font-size: 17px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); }
+  .sheet .btns { display: flex; gap: 8px; margin-top: 6px; }
+  .sheet .btns button { flex: 1; padding: 11px; border-radius: 10px; font-size: 15px; font-weight: 700; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .sheet .btns button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .sheet .msg { font-size: 13px; color: var(--red); min-height: 18px; margin-top: 6px; }
+  /* メニュー */
+  .mnote { color: var(--sub); font-size: 12px; margin: -2px 0 8px; }
+  .mlist { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 6px; }
+  .mrow { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-top: 1px solid var(--line); }
+  .mrow:first-child { border-top: 0; }
+  .mrow .mi { flex: 1; min-width: 0; }
+  .mrow .mn { font-weight: 700; font-size: 14px; word-break: break-word; }
+  .mrow .ms { color: var(--sub); font-size: 12px; margin-top: 2px; }
+  .mrow button { flex: none; font-size: 12px; font-weight: 700; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); }
+  .mrow button.go { border-color: var(--accent); color: var(--accent); }
+  .mempty { color: var(--sub); font-size: 13px; padding: 10px; }
+  .mtag { font-size: 11px; font-weight: 700; border-radius: 6px; padding: 1px 6px; margin-right: 6px; background: var(--line); color: var(--sub); }
+  .mtag.wait { background: #efe6f7; color: #6b3f99; }
+  .tide { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 8px; }
+  .tide .th { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .tide .tn { font-weight: 700; font-size: 15px; }
+  .tide .tnow { font-size: 13px; color: var(--accent); font-weight: 700; }
+  .tide table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+  .tide th, .tide td { text-align: left; padding: 3px 4px; border-top: 1px solid var(--line); font-weight: 400; }
+  .tide th { color: var(--sub); white-space: nowrap; width: 3.2em; }
+  .tide .hi { color: #1d6f8c; font-weight: 700; }
+  .tide .lo { color: #a05a12; font-weight: 700; }
+  .tide small { color: var(--sub); }
+  /* メニューは大きく表示（画面いっぱい近くまで広げ、文字も大きく） */
+  #menu .sheet { max-width: 640px; height: 94vh; max-height: 94vh; padding: 20px 18px 28px; }
+  #menu .sheet h3 { font-size: 22px; }
+  #menu .sheet h4 { font-size: 18px; margin: 20px 0 10px; }
+  #menu .mnote { font-size: 14px; }
+  #menu .mrow { padding: 13px 12px; gap: 10px; }
+  #menu .mrow .mn { font-size: 18px; }
+  #menu .mrow .ms { font-size: 15px; margin-top: 4px; }
+  #menu .mrow button { font-size: 15px; padding: 11px 12px; border-radius: 10px; }
+  #menu .mtag { font-size: 13px; padding: 2px 8px; vertical-align: 2px; }
+  #menu .mempty { font-size: 15px; padding: 14px 12px; }
+  #menu .tide { padding: 14px 12px; margin-bottom: 12px; }
+  #menu .tide .tn { font-size: 20px; }
+  #menu .tide .tnow { font-size: 16px; }
+  #menu .tide table { font-size: 16px; margin-top: 8px; }
+  #menu .tide th, #menu .tide td { padding: 7px 2px; line-height: 1.7; }
+  #menu .tide th { width: 2.6em; }
+  #menu .tide .hi, #menu .tide .lo { font-size: 18px; }
+  #menu .tide small { font-size: 13px; }
+  #menu .btns button { padding: 14px; font-size: 17px; }
+  .mhead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  #menu .mhead h3 { margin: 0; flex: 1; min-width: 0; }
+  .mback { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px;
+    font-size: 16px; font-weight: 700; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--accent); font-family: inherit; cursor: pointer; }
+  .mback:active { background: var(--accent-soft); }
+  .mback .mbt { color: var(--text); font-size: 18px; font-weight: 800; white-space: nowrap; }  /* 今の画面の題名（開局時間など） */
+  .mitem { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 16px 12px; border: 0;
+    border-top: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit; cursor: pointer; }
+  .mitem:first-child { border-top: 0; }
+  a.mitem { text-decoration: none; box-sizing: border-box; }
+  .mitem:active { background: var(--bg); }
+  .mitem .mic { font-size: 26px; flex: none; width: 36px; text-align: center; }
+  .mitem .mi { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .mitem .mn { font-weight: 700; font-size: 18px; }
+  .mitem .ms { color: var(--sub); font-size: 15px; margin-top: 4px; }
+  .mitem .mch { font-size: 26px; color: var(--sub); flex: none; }
+  .tide .tl { display: grid; grid-template-columns: auto 1fr 1fr; align-items: baseline; column-gap: 10px; }
+  .tide .tk { flex: none; color: var(--sub); }
+  .tide .te { white-space: nowrap; }
+  .tide .tl > :nth-child(4) { grid-column: 2; } /* 1日に3回ある日は、3回目を次の行の時刻の列に */
+  #menu .tide td { line-height: 1.5; }
+  #menu .tide .tl { padding: 3px 0; }
+  .tide .tday { margin: 10px 0 2px; font-weight: 700; color: var(--sub); font-size: 13px; }
+  .tide .tr { display: grid; grid-template-columns: 3.4em 3.6em 1fr auto; align-items: center; gap: 8px;
+    padding: 6px 4px; border-top: 1px solid var(--line); }
+  .tide .tday + .tr { border-top: 0; }
+  .tide .tr.past { opacity: .4; }
+  .tide .tr.next { background: rgba(10, 110, 220, .08); border-radius: 8px; }
+  .tide .tr.now { color: var(--accent); font-weight: 700; }
+  .tide .tt { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tide .tb { font-size: 12px; font-weight: 700; border-radius: 6px; padding: 2px 0; text-align: center; }
+  .tide .tb.hi { background: #e3f1f6; color: #1d6f8c; }
+  .tide .tb.lo { background: #fbeedd; color: #a05a12; }
+  .tide .tb.now { background: var(--accent); color: #fff; }
+  .tide .tc { font-variant-numeric: tabular-nums; }
+  .tide .td { font-size: 13px; font-weight: 700; color: var(--accent); }
+  /* 潮位：地点を横に並べる（縦を短く） */
+  .tgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: start; }
+  .tgrid .tide { min-width: 0; }
+  #menu .tgrid .tide { padding: 10px 8px; margin-bottom: 8px; }
+  #menu .tgrid .tide .th { flex-direction: column; align-items: flex-start; gap: 0; }
+  #menu .tgrid .tide .tn { font-size: 19px; }
+  #menu .tgrid .tide .tnow { font-size: 14px; }
+  #menu .tgrid .tide .tpl { font-size: 12px; font-weight: 400; color: var(--sub); }
+  #menu .tgrid .tide .tday { font-size: 13px; margin: 6px 0 0; }
+  #menu .tgrid .tide .tr { grid-template-columns: auto 1.6em 1fr; gap: 5px; padding: 5px 2px; font-size: 16px; }
+  #menu .tgrid .tide .tb { font-size: 13px; padding: 1px 0; }
+  #menu .tgrid .tide .tc { text-align: right; white-space: nowrap; }
+  #menu .tgrid .tide .tc small { font-size: 11px; color: var(--sub); margin-left: 1px; }
+  #menu .tgrid .tide .tr.now .tc small { color: inherit; }
+</style>
+</head>
+<body>
+<div id="ptr"><div class="bubble"><span class="arrow">↓</span> <span class="label">引っ張って更新</span></div></div>
+<header>
+  <div class="top">
+    <h1>船舶情報</h1>
+    <div class="actions">
+      <button class="menubtn" id="menuBtn" onclick="openMenu()" aria-label="メニュー"><span></span><span></span><span></span></button>
+    </div>
+  </div>
+  <div class="meta" id="meta">読み込み中…</div>
+  <nav>
+    <button data-tab="td">本日<span class="count" id="c-td">-</span></button>
+    <button data-tab="hh" class="on">東播磨<span class="count" id="c-hh">-</span></button>
+    <button data-tab="hm">姫路<span class="count" id="c-hm">-</span></button>
+    <button data-tab="lpg">水島<span class="count" id="c-lpg">-</span></button>
+  </nav>
+</header>
+
+<div class="sheet-bg" id="sheet" onclick="if (event.target === this) closeSettings()">
+  <div class="sheet">
+    <h3>設定</h3>
+    <p class="sub">入港・出港時間の計算に使う時間と、出港 変更通知の範囲。保存するとすぐ反映されます。</p>
+    <div id="s-fields"></div>
+    <div class="btns">
+      <button onclick="closeSettings()">閉じる</button>
+      <button class="primary" id="s-save" onclick="saveSettings()">保存</button>
+    </div>
+    <div class="msg" id="s-msg"></div>
+  </div>
+</div>
+
+<div class="sheet-bg" id="menu" onclick="if (event.target === this) closeMenu()">
+  <div class="sheet">
+    <div class="mhead" id="m-head"><button class="mback" id="m-back" onclick="menuView === 'kaikyoku' ? closeMenu() : menuGo('')"><span class="mbl" id="m-blabel">‹ メニューに戻る</span><span class="mbt" id="m-btitle"></span></button><h3 id="m-title">メニュー</h3></div>
+    <div id="m-body"></div>
+    <div class="btns" id="m-close"><button onclick="closeMenu()">閉じる</button></div>
+  </div>
+</div>
+
+<main>
+  <div id="errors"></div>
+  <section class="panel on" id="p-hh"><div class="loading">読み込み中…</div></section>
+  <section class="panel" id="p-td"><div class="loading">読み込み中…</div></section>
+  <section class="panel" id="p-hm"><div class="loading">読み込み中…</div></section>
+  <section class="panel" id="p-lpg"><div class="loading">読み込み中…</div></section>
+</main>
+
+<script>
+  // ---- タブ（最後に見たタブを覚えておく）
+  // タブごとにスクロール位置を覚えて、切り替えたときに戻す（片方のスクロールにつられて動かないように）
+  const tabScroll = {};
+  let curTab = 'hh';
+  const scroller = () => document.scrollingElement || document.documentElement;
+  function showTab(name) {
+    if (!document.getElementById('p-' + name)) name = 'hh'; // 前の「播磨」タブを覚えていた場合も東播磨に
+    if (name !== curTab) tabScroll[curTab] = scroller().scrollTop;
+    const restore = name !== curTab;
+    curTab = name;
+    document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('on', p.id === 'p-' + name));
+    try { localStorage.setItem('shipTab', name); } catch (e) {}
+    if (restore) scroller().scrollTop = tabScroll[name] || 0;
+    if (name === 'lpg') fitMizTimes(); // 見えてから幅を測って一列に収める
+  }
+  document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+  // 横にスワイプしてタブを切り替える（左へ → 水島、右へ → 播磨）
+  (function () {
+    const TABS = ['td', 'hh', 'hm', 'lpg'];
+    let sx = null, sy = 0, st = 0;
+    document.addEventListener('touchstart', e => {
+      const t = e.target;
+      if (e.touches.length !== 1 || document.getElementById('sheet').classList.contains('on') ||
+          (t.closest && t.closest('select, input, a, button'))) { sx = null; return; }
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now();
+    }, { passive: true });
+    document.addEventListener('touchend', e => {
+      if (sx === null) return;
+      const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+      sx = null;
+      // 横に 60px 以上、縦の動きの 1.5 倍以上、0.8 秒以内のときだけ（縦スクロールや引っ張り更新とは区別）
+      if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5 || Date.now() - st > 800) return;
+      if (document.getElementById('menu').classList.contains('on')) {
+        // ☰メニューを開いているあいだはタブを切り替えない。開局時間の画面では表を切り替える（左へ → 通常、右へ → 燃料費削減）
+        if (menuView === 'kaikyoku') setKaikyoku(dx < 0 ? 'normal' : 'eco');
+        return;
+      }
+      const i = TABS.indexOf(curTab) + (dx < 0 ? 1 : -1);
+      if (i >= 0 && i < TABS.length) showTab(TABS[i]);
+    }, { passive: true });
+  })();
+  try { const t = localStorage.getItem('shipTab'); if (t) showTab(t); } catch (e) {}
+
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const num = n => (n === '' || n == null) ? '' : Number(n).toLocaleString();
+  const hm = min => `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`;
+  // 朝からの変更：印と、何が変わったかの行
+  const chgBadge = s => s.isNew ? ' <span class="badge bnew">新規</span>' : (s.changes && s.changes.length ? ' <span class="badge bchg">変更</span>' : '');
+  const chgClass = s => s.isNew ? ' new' : (s.changes && s.changes.length ? ' changed' : '');
+  const chgLines = s => (s.changes && s.changes.length)
+    ? `<div class="chg">${s.changes.map(c =>
+        `${esc(c.what)}　<s>${esc(c.before || '未定')}</s> → <b>${esc(c.after)}</b>`).join('<br>')}</div>` : '';
+  // 同じ岸壁での入れ替え（同じ日に前の船が出港して、この船が入港する）
+  // 港ごとの風の警報・注意報（気象庁。今出ているもの）
+  let currentWinds = {};
+  let currentWindObs = {};
+  let currentWindTimeline = {};
+  let currentWindHistory = {};
+  const WARN_CITY = { '東播磨': '2821000', '姫路': '2820100', '飾磨': '2820100', '水島': '3320200' }; // 加古川市・姫路市・倉敷市
+  const WIND_RED_MS = 20; // この風速（m/s）以上は赤（暴風警報の陸上の基準と同じ）
+  const NO_WEATHER_PORTS = ['飾磨']; // 天気の札を出さない港（姫路と同じなので）
+  const windBadge = port => {
+    if (NO_WEATHER_PORTS.includes(port)) return '';
+    const w = currentWinds[port];
+    // 注意報・警報が出ているとき、または風速が WIND_RED_MS 以上のときだけ札を出す
+    //   色：警報 または WIND_RED_MS 以上＝赤、注意報＝黄
+    const o = currentWindObs[port];
+    const over = !!(o && o.speed >= WIND_RED_MS);
+    if (!w && !over) return '';
+    const level = (w && w.level === 'warning') || over ? 'warning' : 'advisory';
+    const now = windNow(port);
+    // タップすると、港の見出しの下に詳しい情報を開く（もう一度タップで閉じる）
+    return ` <button type="button" class="wind ${level}" data-windport="${esc(port)}">💨 ${w ? esc(w.name) : '暴風'}${now} ▾</button>`;
+  };
+  // 瀬戸内海の海上警報の札（東播磨・姫路・水島の見出しに同じものを出す）。海上風警報は黄、それ以外は赤
+  let currentSea = null;
+  //   押すと、風の札と同じように見出しの下の風の情報（今の風・予想）を開く。陸の風の札がないときは、最初の札に今の風速も出す
+  const seaBadge = port => {
+    if (NO_WEATHER_PORTS.includes(port) || !currentSea || !currentSea.items.length) return '';
+    const noLand = !windBadge(port);
+    return currentSea.items.map((x, i) => ` <button type="button" class="wind ${x.code === '20' ? 'advisory' : 'warning'}" data-windport="${esc(port)}">`
+      + `${x.code === '11' ? '🌫' : '🌊'} ${esc(x.name)}${noLand && i === 0 ? windNow(port) : ''} ▾</button>`).join('');
+  };
+  // 今の風：矢印は風が吹いていく向き（北風なら ↓）。数字は風速 m/s
+  const windNow = port => {
+    const o = currentWindObs[port];
+    if (!o) return '';
+    const title = `${o.station} ${o.time} ${o.dirName ? o.dirName + 'の風 ' : ''}${o.speed}m/s`;
+    const arrow = o.dir ? `<span class="arr" style="transform:rotate(${o.dir * 22.5 + 180}deg)">↑</span>` : '<span class="arr calm">○</span>';
+    return ` <span class="windnow" title="${esc(title)}">${arrow}${esc(o.speed.toFixed(1))}<small>m/s</small></span>`;
+  };
+  // 東播磨と水島の本日の見出しの右端に、日の出・日の入りの時刻
+  //   日の入りを過ぎたら、または本日の予定がなくなったら（本日の欄がない・全部 出港済）、明日の見出しに明日の分
+  let currentSun = null, currentSunMiz = null;
+  const SUN_PORTS = ['東播磨', '水島'];
+  const dayHeadSun = (d, port, days) => {
+    const html = dayHead(d);
+    const sun = port === '水島' ? currentSunMiz : currentSun; // 水島は水島港付近の時刻
+    if (!sun || !SUN_PORTS.includes(port)) return html;
+    // 今日の日の入りを過ぎたら、本日の欄ではなく明日の欄に明日の日の出・日の入りを出す
+    // 日の入りを過ぎたか：この端末の今の時刻（時:分）と、今日の日の入りの時刻（時:分）で比べる
+    const nowHM = (d => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`)(new Date());
+    const afterSunset = !!sun.tomorrow && nowHM >= String(sun.set);
+    const today = (days || []).find(x => x.label === '本日');
+    const noToday = !!sun.tomorrow && !!days && (!today || today.ships.every(s => s.past));
+    const useTomorrow = afterSunset || noToday;
+    const want = useTomorrow ? '明日' : '本日';
+    if (d.label !== want) return html;
+    const t = useTomorrow ? sun.tomorrow : sun;
+    return html.replace(/<\/div>$/, `<span class="sun">☀ ${esc(t.rise)}　🌙 ${esc(t.set)}</span></div>`);
+  };
+  // 札を押したときに出す中身：気象庁の見出し文・発表時刻・今の風
+  const windDetail = port => {
+    if (NO_WEATHER_PORTS.includes(port)) return '';
+    const w = currentWinds[port], o = currentWindObs[port];
+    const lines = [];
+    if (w) lines.push(`<b>${esc(w.name)}</b>（${esc(w.status || '発表中')}）${w.time ? `<span class="wd-time">${esc(w.office || '気象台')} ${esc(w.time)} 発表</span>` : ''}`);
+    if (w && w.headline) lines.push(esc(w.headline));
+    if (o) lines.push(`今の風：${esc(o.station)} ${esc(o.time)} 観測　${o.dirName ? esc(o.dirName) + 'の風 ' : ''}${esc(o.speed.toFixed(1))}m/s`);
+    const hist = windHistoryHtml(port);
+    if (hist) lines.push(hist);
+    // 風の予想（3時間ごと）は出さない（実況だけ）
+    if (!lines.length) return '';
+    return `<div class="winddetail" data-for="${esc(port)}" hidden>${lines.map(l => `<div>${l}</div>`).join('')}`
+      + `<div class="wd-note">気象庁の警報・注意報（${esc({ '東播磨': '加古川市', '姫路': '姫路市', '飾磨': '姫路市', '水島': '倉敷市' }[port] || port)}）とアメダスから。${(currentWindTimeline[port] || {}).src === 'jma'
+        ? `予想は気象庁の時系列（陸上の最大風速）。Open-Meteo を取得できなかったため（${esc(currentWindTimeline[port].err || '')}）`
+        : (currentWindTimeline[port] ? '予想は Weather data by Open-Meteo.com（気象庁MSM）' : '予想を取得できませんでした')}</div></div>`;
+  };
+  // 24時間の風の予想（港の沖の地点・3時間ごと）：上の段に時刻、下の段に風向きの矢印と平均風速
+  //   矢印は風が吹いていく向き。12m/s以上＝黄、20m/s以上＝赤
+  const DIR8 = { '北': 0, '北東': 45, '東': 90, '南東': 135, '南': 180, '南西': 225, '西': 270, '北西': 315 };
+  const windTimelineHtml = port => {
+    const t = currentWindTimeline[port];
+    if (!t || !t.slots || !t.slots.length) return '';
+    let prevDay = '';
+    const head = t.slots.map(sl => {
+      const day = sl.at.slice(8, 10), hour = String(Number(sl.at.slice(11, 13)));
+      const mark = day !== prevDay ? `<small>${Number(sl.at.slice(5, 7))}/${Number(day)}</small>` : '';
+      prevDay = day;
+      return `<th>${mark}${hour}時</th>`;
+    }).join('');
+    const body = t.slots.map(sl => {
+      const deg = sl.deg != null ? sl.deg : DIR8[sl.dir];
+      const cls = sl.speed >= 20 ? ' red' : sl.speed >= 12 ? ' yel' : '';
+      const arrow = deg == null ? '' : `<span class="arr" style="transform:rotate(${deg + 180}deg)">↑</span>`;
+      return `<td class="${cls}">${arrow}<b>${sl.speed == null ? '-' : Number(sl.speed).toFixed(1)}</b></td>`;
+    }).join('');
+    return `<div class="wtl-cap">24時間の予想（港の沖・平均風速 m/s）</div>`
+      + `<div class="wtl-wrap"><table class="wtl"><tr>${head}</tr><tr>${body}</tr></table></div>`;
+  };
+  // 今の風（実況）と、これからの風の予想（3時間ごと）：上の段に時刻、下の段に風向きの矢印と平均風速
+  //   陸上の観測なので、強風注意報(12m/s)以上＝黄、暴風警報(20m/s)以上＝赤
+  const windHistoryHtml = port => {
+    // 左から：今の風（アメダスの実況）→ これからの予想（港の沖の地点の平均風速・Open-Meteo の気象庁MSM・3時間ごと：0時・3時・6時…）
+    //   今より前の時間帯の予想は出さない。合わせて 8 マス
+    const o = currentWindObs[port];
+    const t = currentWindTimeline[port];
+    const nowMs = Date.now();
+    const future = ((t && t.slots) || []).filter(sl => new Date(sl.at.replace(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})$/, '$1/$2/$3 $4:00')).getTime() > nowMs);
+    const cells = (o ? [{ now: true, label: o.time, dir: o.dir, speed: o.speed, land: true }] : [])
+      .concat(future.map(sl => ({ label: Number(sl.at.slice(11, 13)) + '時', day: sl.at.slice(5, 10), deg: sl.deg != null ? sl.deg : DIR8[sl.dir], speed: sl.speed })))
+      .slice(0, 8);
+    if (!cells.length) return '';
+    const today = new Date(); const todayKey = `${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    let prevDay = todayKey;
+    const head = cells.map(c => {
+      if (c.now) return `<th class="now"><small>今</small>${esc(c.label)}</th>`;
+      const mark = c.day !== prevDay ? `<small>${Number(c.day.slice(0, 2))}/${Number(c.day.slice(3, 5))}</small>` : '';
+      prevDay = c.day;
+      return `<th>${mark}${c.label}</th>`;
+    }).join('');
+    const body = cells.map(c => {
+      // 色：12m/s以上＝黄、20m/s以上＝赤
+      const [y, r] = [12, 20];
+      const cls = (c.speed >= r ? ' red' : c.speed >= y ? ' yel' : '') + (c.now ? ' now' : '');
+      const deg = c.now ? (c.dir ? c.dir * 22.5 : null) : c.deg;
+      const arrow = deg != null ? `<span class="arr" style="transform:rotate(${deg + 180}deg)">↑</span>` : `<span class="arr calm">${c.now && c.dir === 0 ? '○' : ''}</span>`;
+      const sp = c.speed == null ? '-' : Number(c.speed).toFixed(1);
+      return `<td class="${cls}">${arrow}<b>${sp}</b></td>`;
+    }).join('');
+    return `<div class="wtl-cap">今の風（${o ? esc(o.station) : ''}）とこれからの予想（${t && t.src === 'jma' ? '気象庁・陸上の最大風速' : '港の沖・平均風速'} m/s・3時間ごと）</div>`
+      + `<div class="wtl-wrap hist"><table class="wtl"><tr>${head}</tr><tr>${body}</tr></table></div>`;
+  };
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('button.wind');
+    if (!b) return;
+    const box = b.closest('.port') && b.closest('.port').querySelector(`.winddetail[data-for="${b.dataset.windport}"]`);
+    if (box) {
+      box.hidden = !box.hidden;
+
+    }
+  });
+  // 日付の見出し。日付の右に曜日を小さく
+  const weekOf = mmdd => {
+    const m = String(mmdd).match(/^(\d{1,2})\/(\d{1,2})$/);
+    if (!m) return '';
+    const now = new Date();
+    let y = now.getFullYear();
+    if (Number(m[1]) < now.getMonth() + 1 - 6) y++; // 年をまたぐ（12月に見る1月）
+    return WEEK[new Date(y, Number(m[1]) - 1, Number(m[2])).getDay()];
+  };
+  const dayHead = d => {
+    const cls = d.label === '本日' ? ' today' : d.label === '明日' ? ' tomorrow' : '';
+    const w = weekOf(d.date); // 曜日は全部の日に
+    return `<div class="day${cls}">${esc(d.label)}<span class="d">${esc(d.date)}${w ? `<span class="wk">(${w})</span>` : ''}</span></div>`;
+  };
+  const sum = days => days.reduce((n, d) => n + d.ships.filter(s => !s.past).length, 0);
+  // 日ごとのまとまり：本日・明日は大きめ（near）、明後日以降（far）は少し間を空けて出す
+  const isNear = d => d.label === '本日' || d.label === '明日';
+  const dayGroup = (d, days, inner) => {
+    const firstFar = !isNear(d) && days.find(x => !isNear(x)) === d;
+    const size = d.label === '本日' ? 'today' : d.label === '明日' ? 'tomorrow' : ''; // 文字の大きさ：本日＝大・明日＝中・明後日以降＝小
+    return `<div class="dgrp ${isNear(d) ? 'near' : 'far'} ${size}${firstFar ? ' farfirst' : ''}">${inner}</div>`;
+  };
+
+  // ---- 入港岸壁（決まった岸壁から選ぶ。選ぶとすぐ保存）
+  let berthOptions = {};
+  function berthSelect(port, s) {
+    const opts = berthOptions[port];
+    if (!opts) return '';
+    const cur = s.berth || '';
+    return `<select class="berth${cur ? ' set' : ''}" data-port="${esc(port)}" data-ship="${esc(s.ship)}" data-prev="${esc(cur)}" aria-label="入港岸壁">`
+      + `<option value="">岸壁</option>`
+      + opts.map(o => `<option value="${esc(o)}"${o === cur ? ' selected' : ''}>${esc(o)}</option>`).join('')
+      + `</select>`;
+  }
+  document.addEventListener('change', e => {
+    const el = e.target;
+    if (!el.classList || !el.classList.contains('berth')) return;
+    const prev = el.dataset.prev || '';
+    el.disabled = true;
+    el.classList.toggle('set', !!el.value);
+    google.script.run
+      .withSuccessHandler(v => { el.disabled = false; el.dataset.prev = v; berthFocus = false; load(false); }) // 出港時間（W岸）を計算し直す
+      .withFailureHandler(err => {
+        el.disabled = false; el.value = prev; el.classList.toggle('set', !!prev);
+        alertBox('岸壁を保存できませんでした：' + (err && err.message || err));
+      })
+      .setBerth(el.dataset.port, el.dataset.ship, el.value);
+  });
+  // 自動更新で選んでいる途中の欄が消えないよう、開いている間は描き直さない
+  let berthFocus = false;
+  document.addEventListener('focusin', e => { if (e.target.classList && e.target.classList.contains('berth')) berthFocus = true; });
+  document.addEventListener('focusout', e => { if (e.target.classList && e.target.classList.contains('berth')) berthFocus = false; });
+  function alertBox(msg) {
+    document.getElementById('errors').innerHTML = `<div class="error">${esc(msg)}</div>`;
+  }
+
+  // 自動車運搬船・ローロー船は船名から Google で「船名 vessel」を検索できる（水島のタンカーと同じ）
+  const SEARCH_TYPES = ['自動車運搬船', '自動車専用船', 'ローロー船'];
+  const shipLink = s => SEARCH_TYPES.some(t => String(s.type).includes(t))
+    ? `<a class="mt" target="_blank" rel="noopener" href="https://www.google.com/search?q=${encodeURIComponent('"' + s.ship + '" vessel')}">${esc(s.ship)}</a>`
+    : esc(s.ship);
+
+  // ---- 播磨（入港・出港をまとめて表示）
+  // 播磨は 2 つのタブに分ける：東播磨タブ、姫路タブ（姫路と飾磨）
+  const HARIMA_TABS = { hh: ['東播磨'], hm: ['姫路', '飾磨'] };
+  // 姫路タブ：飾磨の船は姫路の欄にまとめて、船名の左に「飾磨」の札を付ける（日ごとに時刻順）
+  function mergeShikama(ps) {
+    const hime = ps.find(p => p.port === '姫路');
+    const skm = ps.find(p => p.port === '飾磨');
+    if (!hime || !skm) return ps;
+    const byDate = {};
+    [hime, skm].forEach(p => p.days.forEach(d => {
+      const day = byDate[d.date] || (byDate[d.date] = { label: d.label, date: d.date, ships: [] });
+      d.ships.forEach(s => day.ships.push(p === skm ? Object.assign({}, s, { _port: '飾磨' }) : s));
+    }));
+    const days = Object.keys(byDate).map(k => byDate[k]);
+    const order = d => ['本日', '明日'].indexOf(d.label) >= 0 ? ['本日', '明日'].indexOf(d.label) : 2;
+    days.sort((a, b) => order(a) - order(b) || a.date.localeCompare(b.date)); // 年をまたぐときも本日・明日が先
+    days.forEach(d => d.ships.sort((a, b) => a.sortKey - b.sortKey));
+    return ps.filter(p => p !== skm).map(p => p === hime ? Object.assign({}, hime, { days: days }) : p);
+  }
+  function renderHarima(ports, tows, st) {
+    Object.keys(HARIMA_TABS).forEach(key => {
+      const names = HARIMA_TABS[key];
+      const ps = mergeShikama(names.map(n => ports.find(p => p.port === n)).filter(Boolean));
+      const ts = tows.map(d => Object.assign({}, d, { ships: d.ships.filter(s => names.includes(s.port)) })).filter(d => d.ships.length);
+      renderHarimaTab(ps, ts, st, key);
+    });
+  }
+  function renderHarimaTab(ports, tows, st, key) {
+    let count = 0;
+    const html = ports.map(p => {
+      count += sum(p.days);
+      const body = p.days.length === 0 ? '<div class="empty">予定なし</div>' : p.days.map(d => dayGroup(d, p.days,
+        dayHeadSun(d, p.port, p.days) + d.ships.map(s => {
+          const badges = (s.sizeClass ? ` <span class="badge bsize">${esc(s.sizeClass)}</span>` : '')
+                       + (s.mark3T ? ' <span class="badge b3t">3T</span>' : '')
+                       + (s.mark1T ? ' <span class="badge b1t">1T</span>' : '');
+          const akashi = (s.kind === 'in' || s.kept)  // kept：出港予定待ちで残している船（入ってきたときの表示）
+            ? `${s.akashi ? esc(s.via || '明石') + ' ' + esc(s.akashi) : ''}（${esc(s.from)}）`
+            : `${s.akashi ? esc(s.via || '明石') + ' ' + esc(s.akashi) : ''}（→${esc(s.to)}）`;
+          const info = [s.type || '船種不明', s.length ? s.length + 'm' : '', s.gt ? num(s.gt) + 'GT' : '',
+                        s.kind === 'in' && s.to ? '→ ' + s.to : '',
+                        s.fromWest && s.westInfo ? '← ' + (s.westVia === '備讃' ? '備讃 ' : '') + s.westInfo : ''].filter(Boolean).map(esc).join('</span><span>');
+          return `<div class="ship${s.past ? ' past' : ''}${chgClass(s)}" data-ship="${esc(s.ship)}">`
+               + `<div class="row1"><span class="name">${s.past ? '<span class="kind tout">出港済</span>' : s.tag === 'west' ? '<span class="kind west">西から</span>' : s.tag === 'stay' ? (s.depart === '未定' ? '<span class="kind wait">沖待ち</span>' : '<span class="kind">在港</span>') : '<span class="kind tin">入港</span>'}`
+               + `${s.fromWest && s.tag !== 'west' && !s.past ? '<span class="kind west">西から</span>' : ''}${s._port === '飾磨' ? '<span class="kind skm">飾磨</span>' : ''}${shipLink(s)}<span class="bisan">${akashi}</span></span>${chgBadge(s)}${badges}</div>`
+               + `<div class="times${s.gas ? ' gas' : ''}" style="margin-left:0">${s.showArrive ? `<span>入港 <b${s.arriveLate ? ' class="late"' : ''}>${esc(s.arrive)}</b></span>` : ''}<span>出港 <b>${s.past ? '出港済み' : esc(s.depart)}</b>${s.departSrc === 'bisan' && !s.past ? '<span class="kind west wgo">西行</span>' : ''}</span>${s.nights && !s.past ? `<span class="nights">${esc(s.nights)}</span>` : ''}${berthSelect(s._port || p.port, s)}</div>`
+               + `<div class="row2" style="margin:6px 0 0"><span>${info}</span></div>${chgLines(s)}</div>`;
+        }).join(''))
+      ).join('');
+      return `<div class="port"><h2>${p.emoji} ${esc(p.port)}${windBadge(p.port)}</h2>${windDetail(p.port)}${body}</div>`;
+    }).join('');
+    // 曳航船（そのタブの港の分だけ。入港・出港時間は出さない）
+    const towBody = tows.length === 0 ? '<div class="empty">予定なし</div>' : tows.map(d => dayGroup(d, tows,
+      dayHead(d) + d.ships.map(s =>
+        `<div class="ship${chgClass(s)}"><div class="row1"><span class="name">${esc(s.ship)}`
+        + `<span class="bisan">明石 ${esc(s.akashi)}（${s.dir === '着' ? esc(s.other) : '→' + esc(s.other)}）</span></span>`
+        + `${chgBadge(s)}<span class="badge bsize" style="text-decoration:none;margin-left:6px">${esc(s.port)} ${esc(s.dir)}</span></div>`
+        + `<div class="row2" style="margin:6px 0 0"><span>${esc(s.type || '曳航船')}</span>${s.gt !== '' ? `<span>${num(s.gt)}GT</span>` : ''}`
+        + `${s.towLen || s.towObj ? `<span>曳航長 ${esc(s.towLen)}${s.towObj ? '・' + esc(s.towObj) : ''}</span>` : ''}</div>${chgLines(s)}</div>`
+      ).join(''))).join('');
+    document.getElementById('p-' + key).innerHTML = html
+      + `<div class="port"><h2>⛓ 曳航船</h2>${towBody}</div>`
+      + `<p class="note">強風注意報（黄）・暴風警報（赤）が出ている港と、風速が20m/s以上の港（赤）は、札の中に今の風も出す（気象庁アメダス：東播磨は明石、姫路は姫路、水島は倉敷。飾磨は出さない。矢印は風が吹いていく向き）。明石＝明石海峡航路に入る予定時刻。備讃＝備讃瀬戸東航路の地蔵埼の予定時刻（明石を通らず西から来て西へ出る船）。入港はガスタンカー（＋${hm(st.gasArriveAddMin)}）と自動車船（＋${hm(st.carArriveAddMin)}）と姫路向けタンカー（5万GT未満・＋${hm(st.tankerArriveAddMin != null ? st.tankerArriveAddMin : 120)}。日没後に着く場合は「明日？」。着桟はおよそ24時間なので、出港予定が出たら入港日＝出港日−1日。入港日の日の出までは「入港」の札のまま）だけ計算し、30分単位の近い時刻に丸め、明石を通った日の日没後に着く場合は翌日扱い（赤字）。`
+      + `出港＝明石−${hm(st.harimaDepartMinusMin)}（自動車船 −${hm(st.harimaCarDepartMinusMin)}、W岸 −${hm(st.harimaWDepartMinusMin || 120)}）。明石を通らず西へ出る船は、備讃瀬戸東航路に地蔵埼から入る時刻−${hm(st.harimaBisanMinusMin)}（「西行」の印）。「在港」は入港済みの船（明石＋${hm(st.harimaAkashiStayMin)}、西からは備讃＋${hm(st.harimaBisanStayMin)}を過ぎたら）。出港予定がまだ出ていない入港済みの船は、入港から7日間「在港・出港 未定」で本日の欄に残す。「沖待ち」は入港済みで出港予定がまだない船。「西から」は備讃瀬戸を通って西から来る（来た）船（入港時間の計算はしない）。⚙で変更可。</p>`;
+    document.getElementById('c-' + key).textContent = count;
+  }
+
+  // ---- 水島（LPG と 全岸壁）
+  // 水島の船1隻ぶんの中身（カードの枠は外側で付ける）
+  function mizInner(s, showBerth) {
+    const gasKind = s.gasKind || (String(s.type).includes('ガス') ? 'LPG' : ''); // LPG：MB1・MB2 の 4万〜5万GT、それ以外のガスタンカーは LNG
+    const fromWest = s.fromWest != null ? s.fromWest : s.inPoint === '二面島'; // 二面島から入る船＝西から来る船
+    return `<div class="row1"><span class="name">${gasKind ? `<span class="kind ${gasKind === 'LNG' ? 'lng' : 'lpg'}">${gasKind}</span>` : ''}`  // タンカーの札は出さない（LPG・LNG だけ）
+      + (s.naoWait ? '<span class="kind wait">沖待ち</span>' : '')  // 直島：岸壁が空いていない（出し入れで判断）
+      + (fromWest ? '<span class="kind west">西から</span>' : '')  // 西からは船名の左
+      + (String(s.type).includes('タンカー')  // タンカー・ガスタンカーだけ船名からGoogle検索できる
+          ? `<a class="mt" target="_blank" rel="noopener" href="https://www.google.com/search?q=${encodeURIComponent('"' + s.ship + '" vessel')}">${esc(s.ship)}</a>`
+          : esc(s.ship))
+      + `<span class="bisan">備讃 ${esc(s.time)}（${esc(s.bisanText != null ? s.bisanText : (s.kind === 'stay' && s.inPoint === s.berth ? '→' + s.outPoint : s.inPoint))}）</span></span>`
+      + `${chgBadge(s)}`
+      + `${showBerth ? `<span class="badge bsize" style="text-decoration:none;margin-left:6px">${esc(s.berth)}</span>` : ''}</div>`
+      + `<div class="times mz" style="margin-left:0"><span class="tin">${mizArriveHtml(s)}</span><span class="tout"><span class="lbl${mizArrived(s) ? ' lout' : ''}">出港</span><b>${esc(s.depart)}</b>`
+      + `${s.departSrc === 'radio' && s.depart !== '未定' ? '<span class="psrc">PR</span>' : ''}`  // PR＝ポートラジオの時刻
+      + `${s.toWest && s.depart !== '未定' ? '<span class="kind west wgo">西行</span>' : ''}</span>`  // 西行は出港時間の右
+      + `${s.nights && gasKind === 'LPG' ? `<span class="nights">${esc(s.nights)}</span>` : ''}</div>`  // 泊数は LPG（ガスタンカー）だけ
+      + `<div class="row2" style="margin:6px 0 0">${s.naoWait && s.waitFor ? `<span>${esc(s.waitFor)} の出港待ち</span>` : ''}<span>${esc(s.type || '船種不明')}</span>`
+      + `${s.gt !== '' ? `<span>${num(s.gt)}GT</span>` : ''}${s.length ? `<span>${esc(s.length)}m</span>` : ''}</div>${chgLines(s)}`;
+  }
+  // 同じ岸壁の出入れ：出ていく船と入ってくる船を1枚のカードに
+  // 水島：入港時間のすぐ右に、どこから入ってくるかを小さく（地蔵埼から＝ﾅﾍﾞ、二面島から＝交差部）
+  //   入港が終わった船は、その右を「済み」にする
+  function mizArrived(s) {
+    return String(s.arrive) === '在港' || (s.atArrive && s.atArrive <= Date.now());
+  }
+  function inPointLabel(s) {
+    if (mizArrived(s)) return '<span class="ipt done">済み</span>';
+    if (!/\d:\d\d/.test(String(s.arrive))) return ''; // 入港時間が出ているときだけ（未定には付けない）
+    const t = { '地蔵埼': 'ﾅﾍﾞ', '二面島': '交差部' }[s.inPoint];
+    return t ? `<span class="ipt">${t}</span>` : '';
+  }
+  // 入港の欄：「入港」の札＋時刻＋（ﾅﾍﾞ／交差部）。入港が終わった船は時刻を出さず「済み」だけ
+  //   札の色：これから入港する船は「入港」だけ緑、入港が終わった船（次は出港）は「出港」だけオレンジ
+  function mizArriveHtml(s) {
+    if (mizArrived(s)) return `<span class="lbl">入港</span>${inPointLabel(s)}`;
+    const t = String(s.arrive).replace(/\([日月火水木金土]\)/, ''); // 一列に収めるため曜日は省く
+    return `<span class="lbl lin">入港</span><b>${esc(t)}</b>${inPointLabel(s)}`;
+  }
+  // 水島：入港・出港の欄が一列に収まらないときは、収まるまで文字を少しずつ小さくする（最小 10px）
+  //   入港の欄は、その日の一番広い船に幅をそろえて、出港の札が縦に一直線に並ぶようにする
+  function fitMizTimes() {
+    const rows = [...document.querySelectorAll('#p-lpg .times.mz')];
+    const groups = new Map(); // 日ごと（文字の大きさが日で違うため）
+    rows.forEach(el => {
+      const t = el.querySelector('.tin'); if (!t) return;
+      t.style.minWidth = '';
+      const g = el.closest('.dgrp') || el.parentNode.parentNode;
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(t);
+    });
+    groups.forEach(tins => {
+      const w = Math.max(...tins.map(t => t.offsetWidth));
+      if (w) tins.forEach(t => { t.style.minWidth = (w / parseFloat(getComputedStyle(t).fontSize)).toFixed(3) + 'em'; }); // em なので縮めても揃ったまま
+    });
+    rows.forEach(el => {
+      el.style.fontSize = '';
+      let size = parseFloat(getComputedStyle(el).fontSize);
+      while (el.scrollWidth > el.clientWidth + 1 && size > 10) {
+        size -= 0.5;
+        el.style.fontSize = size + 'px';
+      }
+    });
+  }
+  window.addEventListener('resize', () => fitMizTimes());
+  function swapCard(w) {
+    return `<div class="ship swapcard${w.overlap ? ' over' : ''}">`
+      + `<div class="swaphead">🔁 ${esc(w.berth)} 出入れ${w.overlap ? '<span class="overtag">重なり</span>' : ''}`
+      + `<span class="badge bsize" style="text-decoration:none;margin-left:auto">${esc(w.berth)}</span></div>`
+      + `<div class="swappart${chgClass(w.out)}"><div class="swaplabel">出港</div>${mizInner(w.out, false)}</div>`
+      + `<div class="swaparrow">↓ ${esc(w.out.depart)} 出港 → ${esc(w.in.arrive)} 入港</div>`
+      + `<div class="swappart${chgClass(w.in)}"><div class="swaplabel">入港</div>${mizInner(w.in, false)}</div>`
+      + `</div>`;
+  }
+  function shipRows(days) {
+    return days.map(d => dayGroup(d, days,
+      dayHeadSun(d, '水島', days) + d.ships.map(s => s.kind === 'swap'
+        ? swapCard(s)
+        : `<div class="ship${chgClass(s)}">${mizInner(s, true)}</div>`
+      ).join(''))
+    ).join('');
+  }
+  function renderMizushima(lpg, st) {
+    const body = lpg.length ? shipRows(lpg) : '<div class="empty">予定なし</div>';
+    document.getElementById('p-lpg').innerHTML =
+        `<div class="port"><h2>⚓ 水島${windBadge('水島')}</h2>${windDetail('水島')}${body}</div>`
+      + `<p class="note">MB1・MB2：ガスタンカー（LPG・総トン数4万〜5万）とタンカー。それ以外のガスタンカーはLNGの札。MA5・MA6：タンカー・ガスタンカー。MPG・ASE：ばら積み船・貨物船。直島：船の種類を問わず全部。岸壁が1つなので出し入れで判断し、前の船がまだ出ていない（出港予定がない、または入港より2:00以上後）ときは「沖待ち」（入港＝前の船の出港の時刻）。沖待ちの船は岸壁に入るまで出し続ける（入港＝備讃＋${hm(st.naoArriveAddMin != null ? st.naoArriveAddMin : 100)}、出港＝備讃−${hm(st.naoDepartMinusMin != null ? st.naoDepartMinusMin : 70)}。ポートラジオは使わない）。タンカー・ガスタンカーは船名を押すとGoogleで「船名 vessel」を検索して、船の種類（Type）を確認できます。何泊もする船は、入港する日と出港する日の両方に出す（出港する日の欄には入港日を出す。LPGは泊数も）。同じ日・同じ岸壁で出港と入港があるときは「出入れ」にまとめる。入港が「在港」の船は入港済みで入港日の記録がない船。入港＝備讃の時刻＋${hm(st.mizArriveAddMin)}。出港はみずしまポートラジオの出港時刻（「PR」の印）を使い、ポートラジオに載っていないときと、ポートラジオの時刻が出たあとに備讃の出港予定が${hm(st.mizRadioDiffMin != null ? st.mizRadioDiffMin : 60)}以上変わったときは、備讃の時刻−${hm(st.mizDepartMinusMin)}（⚙で変更可）。右の記号は入る岸壁。<br>出港時刻の情報提供：みずしまポートラジオ</p>`;
+    // 件数は船の数（何泊もする船は入港の日と出港の日の2か所に出るので、重ねて数えない）
+    // 水島タブが見えていないときは幅が測れないので、タブを開いたときにも合わせる（showTab）
+    requestAnimationFrame(fitMizTimes);
+    const names = new Set();
+    lpg.forEach(d => d.ships.forEach(s => (s.kind === 'swap' ? [s.out, s.in] : [s]).forEach(x => names.add(x.ship + '|' + x.berth))));
+    document.getElementById('c-lpg').textContent = names.size;
+  }
+
+  // 取得時刻の表示：「11/7(土) 07:30 取得」と、何分前か（古くなったら色を付ける）
+  let gotAt = '';
+  const WEEK = ['日', '月', '火', '水', '木', '金', '土'];
+  function gotDate(t) {
+    const m = String(t).match(/^(\d{1,2})\/(\d{1,2}) (\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    const now = new Date();
+    let y = now.getFullYear();
+    if (Number(m[1]) > now.getMonth() + 1 + 6) y--; // 1月に見る12月の取得
+    return new Date(y, Number(m[1]) - 1, Number(m[2]), Number(m[3]), Number(m[4]));
+  }
+  function gotHtml(t) {
+    const d = gotDate(t);
+    if (!d) return `<span class="gt">${esc(t)}</span>`;
+    const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return `<span class="gd">${d.getMonth() + 1}/${d.getDate()}(${WEEK[d.getDay()]})</span><span class="gt">${hm}</span><span class="gl">取得</span>`;
+  }
+  function updateAgo() {
+    const el = document.getElementById('ago');
+    const d = gotDate(gotAt);
+    if (!el || !d) return;
+    const min = Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
+    el.textContent = min < 1 ? 'たった今' : min < 60 ? `${min}分前` : `${Math.floor(min / 60)}時間${min % 60 ? (min % 60) + '分' : ''}前`;
+    el.className = 'ago' + (min >= 30 ? ' old' : min >= 10 ? ' late' : '');
+  }
+  setInterval(updateAgo, 30000);
+
+  let currentData = null;
+  function render(data) {
+    currentData = data;
+    if (document.getElementById('menu').classList.contains('on')) renderMenu();
+    document.getElementById('errors').innerHTML = (data.errors || []).map(e => `<div class="error">${esc(e)}</div>`).join('')
+      + (data.notices || []).map(e => `<div class="notice">⚠ ${esc(e)}</div>`).join('');
+    const today = String(data.generatedAt).slice(0, 5);
+    const short = t => String(t).startsWith(today) ? String(t).slice(6) : t; // 今日の日付なら時刻だけ
+    const src = [data.akashiUpdated && `明石 ${short(data.akashiUpdated)}`, data.bisanUpdated && `備讃 ${short(data.bisanUpdated)}`].filter(Boolean).join('・');
+    // 取得の日付・時刻を大きく、曜日と「何分前」を添える。元データの時刻は小さく次の行に
+    gotAt = String(data.generatedAt || '');
+    document.getElementById('meta').innerHTML = `<div class="got">${gotHtml(gotAt)}<span class="ago" id="ago"></span>`
+      + (src ? `<span class="msrc">元データ<br>${esc(src)}</span>` : '') + `</div>`;
+    updateAgo();
+    currentSettings = data.settings || currentSettings;
+    currentWinds = data.winds || {};
+    currentSea = data.seaWarn || null;
+    currentWindObs = data.windObs || {};
+    currentSun = data.sun || null;
+    currentSunMiz = data.sunMiz || null;
+    currentWindTimeline = data.windTimeline || {};
+    currentWindHistory = data.windHistory || {};
+    berthOptions = data.berthOptions || {};
+    // タブごとに描く。1つのタブでエラーが出ても、ほかのタブと読み込みは止めない（エラーは上に出す）
+    try { renderHarima(data.harima || [], data.tows || [], currentSettings); } catch (e) { showRenderError('播磨', e); }
+    try { renderMizushima(data.lpg || [], currentSettings); } catch (e) { showRenderError('水島', e); }
+    try { renderToday(data); } catch (e) { showRenderError('本日', e); }
+  }
+  // ---- 本日タブ：3つの港の今日の入港・出港を時刻順に1行ずつ（済んだ分はたたむ・「今」の線・1時間以内は強調）
+  // 本日タブの行を押したら、その港のタブに切り替えて同じ船の行まで動かす（少しのあいだ枠で目立たせる）
+  function jumpToShip(el) {
+    const port = el.dataset.port, ship = el.dataset.ship;
+    const tab = port === '東播磨' ? 'hh' : 'hm';
+    showTab(tab);
+    const rows = [...document.querySelectorAll('#p-' + tab + ' .ship')].filter(x => x.dataset.ship === ship);
+    const t = rows.find(x => !x.classList.contains('past')) || rows[0];
+    if (!t) return; // もう一覧にない船（出港し終えた船など）はタブを切り替えるだけ
+    const sc = scroller();
+    const nav = document.querySelector('nav');
+    const top = t.getBoundingClientRect().top + sc.scrollTop - (nav ? nav.getBoundingClientRect().bottom : 0) - 60;
+    sc.scrollTop = Math.max(0, top);
+    t.classList.remove('jumped'); void t.offsetWidth; t.classList.add('jumped');
+    setTimeout(() => t.classList.remove('jumped'), 1000);
+  }
+  let tdPastOpen = false, tdLast = null;
+  function toggleTodayPast() { tdPastOpen = !tdPastOpen; if (tdLast) renderToday(tdLast); }
+  function renderToday(data) {
+    tdLast = data;
+    const now = Date.now();
+    const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+    const t0 = d0.getTime(), t1 = t0 + 86400000;
+    const isToday = ms => ms && ms >= t0 && ms < t1;
+    const ev = [], seen = new Set();
+    const push = e => { const k = e.io + e.port + e.ship + e.ms; if (!seen.has(k)) { seen.add(k); ev.push(e); } };
+    // 今日の入港・出港はサーバーで作る（終わった分も、その日のあいだ記録してある）
+    (data.today || []).forEach(e => { if (isToday(e.ms)) push(e); });
+    ev.sort((a, b) => a.ms - b.ms);
+    const hhmm = ms => { const t = new Date(ms); return `${t.getHours()}:${String(t.getMinutes()).padStart(2, '0')}`; };
+    const PCLS = { '東播磨': 'p-hh', '姫路': 'p-hm', '飾磨': 'p-skm', '水島': 'p-mz' };
+    const row = e => `<div class="tdr ${e.io}${e.ms < now ? ' done' : e.ms - now < 3600000 ? ' soon' : ''}" data-port="${esc(e.port)}" data-ship="${esc(e.ship)}" onclick="jumpToShip(this)">`
+      + `<span class="tdt">${hhmm(e.ms)}${e.io === 'in' ? `<small>${esc(e.via || '沖着')}</small>` : ''}</span>`
+      + `<span class="tdio">${e.io === 'in' ? '入港' : '出港'}</span>`
+      + `<span class="tdp ${PCLS[e.port] || ''}">${esc(e.port)}${e.berth ? ' ' + esc(e.berth) : ''}</span>`
+      + `<span class="tdn">${esc(e.ship)}</span>`
+      + `<span class="tds">${e.west ? '<span class="kind west wgo">西行</span>' : ''}${e.pr ? '<span class="psrc">PR</span>' : ''}${e.sub ? esc(e.sub) : ''}</span></div>`;
+    const past = ev.filter(e => e.ms < now), next = ev.filter(e => e.ms >= now);
+    const t = new Date();
+    document.getElementById('p-td').innerHTML = `<div class="port"><h2>⏱ 本日の動き<span class="tdday">${t.getMonth() + 1}/${t.getDate()}(${WEEK[t.getDay()]})</span></h2>`
+      + (past.length ? `<button type="button" class="tdpastb" onclick="toggleTodayPast()">${tdPastOpen ? '▼' : '▶'} 済み ${past.length}件</button>${tdPastOpen ? past.map(row).join('') : ''}` : '') // 終わった分は「今」の線の上。押すと薄く出る（更新しても開いたまま）
+      + `<div class="tdnow"><span>今 ${hhmm(now)}</span></div>`
+      + (next.length ? next.map(row).join('') : '<div class="empty">これからの予定なし</div>')
+      + `</div><p class="note">東播磨・姫路（飾磨）の今日の入港と出港を時刻順に（水島は出さない）。入港の時刻の下の「明石」「備讃」は明石（備讃）を通る時刻、「沖着」はガスタンカーなど入港時刻を計算している船の時刻。1時間以内の予定は色付き。</p>`;
+    document.getElementById('c-td').textContent = next.length;
+  }
+  function showRenderError(where, e) {
+    console.error(e);
+    const at = String(e && e.stack || '').split('\n').find(l => /index|<anonymous>|userCode/.test(l)) || '';
+    document.getElementById('errors').insertAdjacentHTML('beforeend',
+      `<div class="error">表示のエラー（${esc(where)}）：${esc(e && e.message || e)}${at ? `<br><small>${esc(at.trim())}</small>` : ''}</div>`);
+  }
+
+  function fail(err) {
+    // 表示中のデータがあれば消さずに、札だけ「更新失敗」にする
+    const ago = document.getElementById('ago');
+    if (ago) { ago.textContent = '更新失敗'; ago.className = 'ago old'; }
+    else document.getElementById('meta').textContent = '読み込みに失敗しました';
+    document.getElementById('errors').innerHTML = `<div class="error">${esc(err && err.message || err)}</div>`;
+  }
+
+  // ---- 設定
+  const SETTING_FIELDS = [
+    { group: '播磨（明石海峡航路の時刻から）' },
+    { key: 'gasArriveAddMin',         label: 'ガスタンカー 入港 ＝ 明石 ＋' },
+    { key: 'carArriveAddMin',         label: '自動車船・RoRo 入港 ＝ 明石 ＋' },
+    { key: 'tankerArriveAddMin',      label: '姫路向けタンカー（5万GT未満）入港 ＝ 明石 ＋' },
+    { key: 'harimaDepartMinusMin',    label: '出港 ＝ 明石 −' },
+    { key: 'harimaCarDepartMinusMin', label: '自動車船 出港 ＝ 明石 −' },
+    { key: 'harimaBisanMinusMin',     label: '西へ出る船 出港 ＝ 備讃（地蔵埼）−' },
+    { key: 'harimaWDepartMinusMin',   label: 'W岸の船 出港 ＝ 明石 −' },
+    { key: 'harimaAkashiStayMin',     label: '在港にする ＝ 明石 ＋' },
+    { key: 'harimaBisanStayMin',      label: '西からの船を在港にする ＝ 備讃 ＋' },
+    { group: '水島（備讃瀬戸東航路の時刻から）' },
+    { key: 'mizArriveAddMin',         label: '入港 ＝ 備讃 ＋' },
+    { key: 'mizDepartMinusMin',       label: '出港 ＝ 備讃 −' },
+    { key: 'mizRadioDiffMin',         label: '備讃の出港予定がこれ以上変わったら備讃を優先（ポートラジオより）' },
+    { group: '直島（水島タブ・備讃瀬戸東航路の時刻から）' },
+    { key: 'naoArriveAddMin',         label: '入港 ＝ 備讃 ＋' },
+    { key: 'naoDepartMinusMin',       label: '出港 ＝ 備讃 −' },
+    { group: '出港 変更通知（Discord・Telegram）' },
+    { key: 'notifyMaxDays',           label: '通知を送る出港の範囲', days: true }   // 日数で選ぶ（時間・分ではない）
+  ];
+  const NOTIFY_DAY_NAMES = ['本日だけ', '明日まで', '明後日まで', '3日後まで', '4日後まで', '5日後まで', '6日後まで', '7日後まで'];
+  let currentSettings = { gasArriveAddMin: 120, carArriveAddMin: 120, harimaDepartMinusMin: 150,
+                          harimaCarDepartMinusMin: 120, harimaBisanMinusMin: 180, harimaWDepartMinusMin: 120,
+                          harimaAkashiStayMin: 120, harimaBisanStayMin: 240, mizArriveAddMin: 100, mizDepartMinusMin: 30,
+                          tankerArriveAddMin: 120,
+                          mizRadioDiffMin: 60, naoArriveAddMin: 100, naoDepartMinusMin: 70, notifyMaxDays: 2 };
+  function openSettings() {
+    document.getElementById('s-fields').innerHTML = SETTING_FIELDS.map(f => f.group ? `<h4>${esc(f.group)}</h4>` :
+      f.days ? `<div class="field"><label>${esc(f.label)}</label><div class="hm"><select id="s-${f.key}">`
+        + NOTIFY_DAY_NAMES.map((n, i) => `<option value="${i}"${Number(currentSettings[f.key] != null ? currentSettings[f.key] : 2) === i ? ' selected' : ''}>${n}</option>`).join('')
+        + `</select></div></div>` :
+      `<div class="field"><label>${esc(f.label)}</label><div class="hm">`
+      + `<input type="number" inputmode="numeric" min="0" max="24" id="s-${f.key}-h" value="${Math.floor(currentSettings[f.key] / 60)}">時間`
+      + `<input type="number" inputmode="numeric" min="0" max="59" id="s-${f.key}-m" value="${currentSettings[f.key] % 60}">分</div></div>`).join('');
+    document.getElementById('s-msg').textContent = '';
+    document.getElementById('sheet').classList.add('on');
+  }
+  function closeSettings() { document.getElementById('sheet').classList.remove('on'); }
+  function saveSettings() {
+    const v = id => Number(document.getElementById(id).value || 0);
+    const values = {};
+    for (const f of SETTING_FIELDS) {
+      if (!f.key) continue;
+      if (f.days) { values[f.key] = v(`s-${f.key}`); continue; }
+      const h = v(`s-${f.key}-h`), m = v(`s-${f.key}-m`);
+      if (isNaN(h) || isNaN(m) || h < 0 || h > 24 || m < 0 || m > 59) {
+        document.getElementById('s-msg').textContent = '時間は0〜24、分は0〜59で入力してください';
+        return;
+      }
+      values[f.key] = h * 60 + m;
+    }
+    document.getElementById('s-save').disabled = true;
+    google.script.run
+      .withSuccessHandler(st => { currentSettings = st; document.getElementById('s-save').disabled = false; closeSettings(); load(false); })
+      .withFailureHandler(e => { document.getElementById('s-save').disabled = false; document.getElementById('s-msg').textContent = '保存できませんでした：' + (e && e.message || e); })
+      .saveSettings(values);
+  }
+
+  // ---- メニュー（☰）：在港・沖待ちの船を手で出港済にする／潮位（宇野・水島）
+  //   開くと項目の一覧。項目を押すとその画面、「‹ メニュー」で一覧に戻る
+  let menuView = '';
+  // 通知が届く Telegram のボットのリンク（t.me/ボットのユーザー名）。空なら一覧に出さない
+  //   注意：GAS の HtmlService は、引用符の中でも「//」から後ろをコメントとして消してしまうので、URL は「//」を書かずに組み立てる
+  const TELEGRAM_URL = ['https:', '', 't.me', 'Himeji_ship_bot'].join('/');
+  const MENU_ITEMS = [
+    { key: 'tide', icon: '🌊', title: '潮位（宇野・水島・丸亀・坂出）', page: '潮位' },
+    { key: 'stay', icon: '⚓', title: '在港・沖待ちの船（播磨）', page: '在港・沖待ち' },
+    { key: 'kaikyoku', icon: '🕒', title: '開局時間（目安表）', page: '開局時間' },
+    { key: 'telegram', icon: '✈️', title: 'Telegram（通知）', link: TELEGRAM_URL },
+    { key: 'settings', icon: '⚙', title: '設定', action: () => { closeMenu(); openSettings(); } } // 押すと設定の画面を開く
+  ];
+  // ---- 開局時間（目安表）：起 平成20年8月1日／更 平成29年8月25日 の表を写したもの（時間.分）
+  //   スマホで見やすいよう、行き先を縦、基地（入／出）を横に並べ替えている
+  const KAIKYOKU = {
+    dest: ['飾磨', 'ＬＮＧ', '広畑', '網干', '相生', '赤穂', '加Ｅ岸', '加Ｓ岸', '加Ｗ岸', '新島公共', '高砂', '西島'],
+    dir: [8, 9], // DIR.入港は＋15分（加Ｗ岸・新島公共）
+    hide: ['網干', '西島', '高松', '坂出'], // 表に出さない行き先・港（数字は残してある）
+    far: ['備讃東', '宇野', '鍋島（入）', '六口待機', '水島（出）', '高松', '坂出'],
+    normal: {
+      label: '通常',
+      rows: [ // 飾磨 入・出／広畑 入・出／加古川 入・出
+        ['0.45', '1.15', '0.45', '1.00', '1.15', '1.45', '1.15', '1.15', '1.15', '1.15', '1.15', '1.15'],
+        ['0.40', '1.00', '0.45', '1.00', '1.30', '2.00', '1.30', '1.30', '1.15', '1.30', '1.15', '1.30'],
+        ['0.45', '1.20', '0.45', '1.00', '1.15', '1.45', '1.30', '1.30', '1.30', '1.30', '1.30', '1.15'],
+        ['0.45', '1.00', '0.40', '1.00', '1.30', '2.00', '1.45', '1.45', '1.30', '1.45', '1.30', '1.30'],
+        ['1.30', '1.30', '1.30', '1.45', '2.00', '2.30', '1.00', '1.00', '0.45', '0.45', '1.00', '2.15'],
+        ['1.30', '1.55', '1.45', '2.00', '2.15', '2.45', '0.40', '0.40', '1.00', '0.40', '1.00', '2.30']
+      ],
+      far: [['3.15', '3.45', '4.15', '4.00', '4.45', '3.45', '4.30'], ['3.45', '4.35', '5.05', '5.00', '5.35', '4.45', '5.20']], // 姫路／加古川
+      akashi: [['3.10', '2.25'], ['3.20', '2.35'], ['2.30', '1.45']] // 飾磨・広畑・加古川 × 明石東・明石西
+    },
+    eco: {
+      label: '燃料費削減',
+      sub: '春・鷹・絆・徳（500rpm）／竜・富（550rpm）',
+      rows: [
+        ['0.45', '1.25', '0.45', '', '1.25', '1.55', '1.25', '1.25', '1.25', '1.25', '1.25', ''],
+        ['0.40', '1.00', '0.45', '', '1.40', '2.10', '1.40', '1.40', '1.25', '1.40', '1.25', ''],
+        ['0.45', '1.30', '0.45', '', '1.25', '1.55', '1.40', '1.40', '1.40', '1.40', '1.40', ''],
+        ['0.45', '1.00', '0.40', '', '1.40', '2.10', '1.55', '1.55', '1.40', '1.55', '1.40', ''],
+        ['1.40', '1.40', '1.40', '', '2.20', '2.50', '1.00', '1.00', '0.45', '0.45', '1.05', ''],
+        ['1.40', '2.05', '1.55', '', '2.35', '3.05', '0.40', '0.40', '1.00', '0.40', '1.05', '']
+      ],
+      far: [['3.40', '4.20', '4.55', '4.40', '5.35', '', ''], ['4.10', '5.20', '5.55', '5.40', '6.35', '', '']],
+      akashi: [['3.45', '2.40'], ['3.55', '2.50'], ['3.00', '1.55']]
+    },
+    notes: [
+      '① 基地での水先人迎えは15分前として、他の場所で向かえる場合は各出港分とする。',
+      '② 他港泊の翌日開局時間は船長が決め、基地までの着時間は実時間とする。',
+      '③ 気象・海象及び作業内容によって船長判断で前後させる。',
+      '④ その他、特殊作業については都度相談する。',
+      '⑤ のり棚撤去時期は加古川WEST出港時は、0.45前とする（加古川3隻）',
+      '⑥ 新島公共入港船DIRは姫路・加古川全船＋15分とする。',
+      '⑦ 加Ｗ岸入港船DIRは加古川のみ＋15分とする。',
+      '⑧ 赤穂原料岸壁に係留出来ない場合の野瀬岸壁泊についての開局時間：入港 野瀬岸壁〜赤穂港外 8.6nm 通常回転 1:15／低速回転 1:25。出港 野瀬岸壁〜赤穂港内 10.5nm 通常回転 1:30／低速回転 1:40。※係留時には野瀬見張所に連絡（℡ 0791-22-2012 平日 09:00〜15:45）',
+      '⑨ 早駒1号に係留して閉局する場合：サイド着＋20分 早鷹丸、サイド着＋10分 早徳丸・早竜丸'
+    ]
+  };
+  // 上の表の基地の並び：広畑・飾磨・加古川（データは 飾磨0・広畑1・加古川2 の順のまま）
+  const KK_BASE_ORDER = [1, 0, 2];
+  const KK_COL_ORDER = [2, 3, 0, 1, 4, 5]; // 入・出の列（基地×2）
+  let kaikyokuMode = 'eco'; // 左のボタン（燃料費削減）から開く
+  let kkSel = null;         // 押した枠（{ t: 表の番号, r: 行, c: 列 }）。もう一度押すと消える。表を切り替えても残る
+  function setKaikyoku(m) { kaikyokuMode = m; renderMenu(); }
+  function kkTap(t, r, c) {
+    kkSel = kkSel && kkSel.t === t && kkSel.r === r && kkSel.c === c ? null : { t: t, r: r, c: c };
+    const sc = document.querySelector('#menu .sheet'), y = sc.scrollTop;
+    renderMenu();
+    sc.scrollTop = y;
+  }
+  function kaikyokuHtml() {
+    const K = KAIKYOKU, t = K[kaikyokuMode];
+    // 押した枠は濃く、同じ行・同じ列は薄く色を付ける（行き先と基地をたどりやすくする）
+    const cls = (ti, r, c) => !kkSel || kkSel.t !== ti ? '' : kkSel.r === r && kkSel.c === c ? ' kksel' : kkSel.r === r || kkSel.c === c ? ' kkline' : '';
+    const cell = (ti, r, c, v) => `<td class="${cls(ti, r, c).trim()}" onclick="kkTap(${ti},${r},${c})">${v || '<span class="kk0">—</span>'}</td>`;
+    const plain = v => `<td>${v || '<span class="kk0">—</span>'}</td>`; // 下の2つの表は押しても印を付けない
+    const rowTh = (ti, r, label, extra) => `<th class="${((extra || '') + (kkSel && kkSel.t === ti && kkSel.r === r ? ' kkhead' : '')).trim()}">${label}</th>`;
+    const colTh = (ti, c, label, extra) => `<th class="${((extra || '') + (kkSel && kkSel.t === ti && kkSel.c === c ? ' kkhead' : '')).trim()}">${label}</th>`;
+    const base = c => kkSel && kkSel.t === 0 && Math.floor(kkSel.c / 2) === c ? ' class="kkhead"' : '';
+    return `<div class="kkseg">${['eco', 'normal'].map(m => `<button class="${m === kaikyokuMode ? 'on' : ''}" onclick="setKaikyoku('${m}')">${K[m].label}</button>`).join('')}</div>`
+      + `<p class="kksub">${t.sub ? esc(t.sub) : '横にスワイプで切り替え'}</p>`
+      + `<table class="kk"><thead><tr><th rowspan="2">行き先</th>${KK_BASE_ORDER.map(b => `<th colspan="2"${base(b)}>${['飾磨', '広畑', '加古川'][b]}</th>`).join('')}</tr>`
+      + `<tr>${KK_COL_ORDER.map(c => colTh(0, c, c % 2 ? '出' : '入', c % 2 ? 'kout' : 'kin')).join('')}</tr></thead><tbody>`
+      + K.dest.map((d, i) => K.hide.includes(d) ? '' : `<tr>${rowTh(0, i, K.dir.includes(i) ? `${d === '新島公共' ? '新島' : d}<span class="kkdir">DIR<br>+15</span>` : d, K.dir.includes(i) ? 'kdir' : '')}${KK_COL_ORDER.map(c => cell(0, i, c, t.rows[c][i])).join('')}</tr>`).join('')
+      + `</tbody></table>`
+      + `<table class="kk kkplain"><thead><tr><th>港</th><th>姫路</th><th>加古川</th></tr></thead><tbody>`
+      + K.far.map((d, i) => K.hide.includes(d) ? '' : `<tr><th>${d}</th>${plain(t.far[0][i])}${plain(t.far[1][i])}</tr>`).join('') + `</tbody></table>`
+      + `<table class="kk kkplain"><thead><tr><th>基地</th><th>明石西</th><th>明石東</th></tr></thead><tbody>`
+      + ['飾磨', '広畑', '加古川'].map((d, i) => `<tr><th>${d}</th>${plain(t.akashi[i][1])}${plain(t.akashi[i][0])}</tr>`).join('') + `</tbody></table>`
+      + `<div class="btns kkclose"><button onclick="closeMenu()">閉じる</button></div>`  // いちばん下の表のすぐ下（注記より上）
+      + `<div class="kknotes">${K.notes.map(n => `<p>${esc(n)}</p>`).join('')}</div>`
+      + `<p class="kksub">起：平成20年8月1日　更：平成29年8月25日（時間.分）</p>`;
+  }
+  function openMenu() { menuView = ''; renderMenu(); document.getElementById('menu').classList.add('on'); }
+  function closeMenu() { document.getElementById('menu').classList.remove('on'); }
+  function menuGo(view) {
+    const it = MENU_ITEMS.find(x => x.key === view);
+    if (it && it.action) { it.action(); return; }
+    menuView = view;
+    renderMenu();
+    document.querySelector('#menu .sheet').scrollTop = 0;
+  }
+  function renderMenu() {
+    const d = currentData || {};
+    const item = MENU_ITEMS.find(x => x.key === menuView);
+    document.getElementById('m-title').textContent = item ? item.page : 'メニュー';
+    document.getElementById('m-back').style.display = item ? '' : 'none';
+    document.getElementById('m-title').style.display = item ? 'none' : '';      // 中の画面では、題名は横長の戻るボタンの右に出す
+    document.getElementById('m-btitle').textContent = item ? item.page : '';
+    document.getElementById('m-blabel').textContent = menuView === 'kaikyoku' ? '× 閉じる' : '‹ メニューに戻る'; // 開局時間だけ、上のボタンで閉じる
+    document.getElementById('m-close').style.display = menuView === 'kaikyoku' ? 'none' : ''; // 開局時間は表のすぐ下に「閉じる」を出す
+    document.getElementById('m-body').innerHTML = menuView === 'stay' ? stayListHtml(d)
+      : menuView === 'tide' ? tideHtml(d.tide)
+      : menuView === 'kaikyoku' ? kaikyokuHtml()
+      : `<div class="mlist mmenu">${MENU_ITEMS.filter(x => x.link !== '').map(x => {
+          const inner = `<span class="mic">${x.icon}</span><span class="mi"><span class="mn">${esc(x.title)}</span>`
+            + `<span class="ms">${esc(menuSummary(x.key, d))}</span></span><span class="mch">${x.link ? '↗' : '›'}</span>`;
+          // 外のアプリ（Telegram）を開く項目はリンク。それ以外はメニューの中の画面へ
+          return x.link
+            ? `<a class="mitem" href="${esc(x.link)}" target="_blank" rel="noopener">${inner}</a>`
+            : `<button class="mitem" onclick="menuGo('${x.key}')">${inner}</button>`;
+        }).join('')}</div>`;
+  }
+  // 一覧の各項目の下に出す、ひとこと
+  function menuSummary(key, d) {
+    if (key === 'stay') {
+      let stay = 0, wait = 0;
+      (d.harima || []).forEach(p => p.days.forEach(day => day.ships.forEach(s => {
+        if (s.past || s.tag !== 'stay') return;
+        if (s.depart === '未定') wait++; else stay++;
+      })));
+      return `在港 ${stay}隻・沖待ち ${wait}隻` + ((d.gone || []).length ? `・出港済にした船 ${d.gone.length}隻` : '');
+    }
+    if (key === 'settings') return '入港・出港時間の計算に使う時間';
+    if (key === 'telegram') return '通知のトークを開く';
+    if (key === 'tide') {
+      const t = d.tide;
+      if (!t || !t.stations) return '取得できませんでした';
+      return t.stations.map(st => { const n = tideNow(st); return n ? `${st.name} ${n.v}cm${n.dir}` : st.name; }).join('・');
+    }
+    return '';
+  }
+  // 今の潮位と上げ潮・下げ潮
+  //   上げ潮・下げ潮：次に来るのが満潮なら上げ潮、干潮なら下げ潮（満潮・干潮の時刻をまたいだらすぐ切り替わる）
+  //   今の潮位：直前と次の満潮・干潮のあいだを、なめらかな曲線（コサイン）でつないで読む
+  //   今日の最初の満潮・干潮より前は、直前の分がないので毎時の値を線でつないで読む
+  function tideNow(st) {
+    const now = new Date(), nowMs = now.getTime();
+    const ev = tideEvents(st);
+    const next = ev.find(e => e.ms > nowMs);
+    const prev = [...ev].reverse().find(e => e.ms <= nowMs);
+    if (!next) return null;
+    const dir = next.high ? '↑' : '↓', word = next.high ? '上げ潮' : '下げ潮';
+    let v = null;
+    if (prev && prev.cm != null && next.cm != null) {
+      const f = (nowMs - prev.ms) / (next.ms - prev.ms);
+      v = prev.cm + (next.cm - prev.cm) * (1 - Math.cos(Math.PI * f)) / 2;
+    } else {
+      const td = st.days.find(x => x.label === '本日');
+      if (td && td.hourly) {
+        const h = now.getHours(), f = now.getMinutes() / 60;
+        const a = td.hourly[h], b = h < 23 ? td.hourly[h + 1] : null;
+        if (a != null && b != null) v = a + (b - a) * f;
+      }
+    }
+    if (v == null) return null;
+    return { v: Math.round(v), dir: dir, word: word };
+  }
+  // 在港・沖待ち（播磨）：アプリが覚えている入港済みの船。予定表に載らずに出て行った船は「出港済にする」で一覧から外す
+  function stayListHtml(d) {
+    const rows = [];
+    (d.harima || []).forEach(p => p.days.forEach(day => day.ships.forEach(s => {
+      if (s.past || s.tag !== 'stay') return;
+      const wait = s.depart === '未定';
+      rows.push(`<div class="mrow"><div class="mi"><div class="mn"><span class="mtag${wait ? ' wait' : ''}">${wait ? '沖待ち' : '在港'}</span>${esc(s.ship)}</div>`
+        + `<div class="ms">${esc(p.port)}・${esc(s.via || '明石')} ${esc(s.akashi || '')}・出港 ${esc(s.depart)}</div></div>`
+        + `<button class="go" data-gone="1" data-port="${esc(p.port)}" data-ship="${esc(s.ship)}">出港済にする</button></div>`);
+    })));
+    const gone = (d.gone || []).map(g => `<div class="mrow"><div class="mi"><div class="mn">${esc(g.ship)}</div>`
+      + `<div class="ms">${esc(g.port)}・${esc(g.at)} に出港済にした</div></div>`
+      + `<button data-gone="0" data-port="${esc(g.port)}" data-ship="${esc(g.ship)}">元に戻す</button></div>`).join('');
+    return `<p class="mnote">予定表に載らずに出て行った船は「出港済にする」で一覧から外せます（次に入港するときはまた出ます。7日で消えます）。</p>`
+      + `<div class="mlist">${rows.join('') || '<div class="mempty">在港・沖待ちの船はありません</div>'}</div>`
+      + (gone ? `<h4>出港済にした船</h4><div class="mlist">${gone}</div>` : '');
+  }
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('button[data-gone]');
+    if (!b) return;
+    const gone = b.dataset.gone === '1';
+    b.disabled = true; b.textContent = '保存中…';
+    google.script.run
+      .withSuccessHandler(() => { lastLoaded = 0; load(false); })
+      .withFailureHandler(err => { b.disabled = false; b.textContent = gone ? '出港済にする' : '元に戻す'; alertBox('保存できませんでした：' + (err && err.message || err)); })
+      .setGone(b.dataset.port, b.dataset.ship, gone);
+  });
+  // 潮位：今の潮位（毎時の値から計算）と、今日・明日の満潮・干潮
+  // 潮位：地点ごとに、満潮・干潮を時刻の順に並べる（今日・明日）。過ぎたものは薄く、次に来るものに「次」、その間に「今」の行
+  function tideHtml(tide) {
+    if (!tide || !tide.stations) return '<div class="mempty">潮位を取得できませんでした</div>';
+    const nowMs = Date.now();
+    const nowD = new Date(nowMs);
+    const hhmm = `${String(nowD.getHours()).padStart(2, '0')}:${String(nowD.getMinutes()).padStart(2, '0')}`;
+    const body = tide.stations.map(st => {
+      if (!st.days.length) return `<div class="tide"><div class="tn">${esc(st.name)}</div><div class="mempty">取得できませんでした</div></div>`;
+      const n = tideNow(st);
+      const ev = tideEvents(st);
+      const next = ev.find(e => e.ms > nowMs);
+      let rows = '', lastDay = '', nowShown = false;
+      const nowRow = () => n ? `<div class="tr now"><span class="tt">${hhmm}</span><span class="tb now">今</span><span class="tc">${n.v}<small>cm</small>${n.dir}</span></div>` : '';
+      ev.forEach(e => {
+        if (e.day !== lastDay) {
+          rows += `<div class="tday">${esc(e.label)} <small>${esc(e.date)}</small></div>`;
+          lastDay = e.day;
+        }
+        if (!nowShown && e === next) { rows += nowRow(); nowShown = true; }
+        const past = e.ms <= nowMs;
+        rows += `<div class="tr${past ? ' past' : ''}${e === next ? ' next' : ''}"><span class="tt">${esc(e.t)}</span>`
+          + `<span class="tb ${e.high ? 'hi' : 'lo'}">${e.high ? '満' : '干'}</span><span class="tc">${e.cm}<small>cm</small></span></div>`;
+      });
+      const place = st.place ? ` <small class="tpl">${esc(st.place)}</small>` : ''; // 近くの潮位表の地点（丸亀→多度津、坂出→与島）
+      return `<div class="tide"><div class="th"><span class="tn">${esc(st.name)}${place}</span>${n ? `<span class="tnow">${n.dir}${n.word}</span>` : ''}</div>${rows}</div>`;
+    }).join('');
+    // 地点（宇野・水島）を横に並べて、縦を短くする
+    return `<div class="tgrid">${body}</div>`
+      + '<p class="mnote">気象庁の潮位表から（cm は潮位表の基準面からの高さ）。丸亀・坂出は潮位表に地点がないため、近くの多度津・与島の値。満＝満潮・干＝干潮、薄い行は過ぎた分、色の付いた行が次。今の潮位は計算した目安です。</p>';
+  }
+  // 満潮・干潮を時刻の順に（今日・明日）
+  function tideEvents(st) {
+    const now = new Date();
+    const at = (date, t) => {
+      let y = now.getFullYear();
+      const m = Number(date.slice(0, 2)), d = Number(date.slice(3, 5));
+      if (m < now.getMonth() + 1 - 6) y++; // 年をまたぐ（12月に見る1月の分）
+      return new Date(y, m - 1, d, Number(t.slice(0, 2)), Number(t.slice(3, 5))).getTime();
+    };
+    const ev = [];
+    st.days.forEach(day => {
+      (day.high || []).forEach(x => ev.push({ ms: at(day.date, x.t), t: x.t, cm: x.cm, high: true, day: day.date, label: day.label, date: day.date }));
+      (day.low || []).forEach(x => ev.push({ ms: at(day.date, x.t), t: x.t, cm: x.cm, high: false, day: day.date, label: day.label, date: day.date }));
+    });
+    return ev.sort((a, b) => a.ms - b.ms);
+  }
+
+  // 読み込み中かどうかと、最後に読み込んだ時刻（自動更新で使う）
+  let loading = false, lastLoaded = 0;
+  function load(force) {
+    loadThen(force, () => {});
+  }
+
+  // ---- 下に引っ張って更新（画面の一番上で下に引くと、最新を取り直す）
+  (function () {
+    const ptr = document.getElementById('ptr');
+    const label = ptr.querySelector('.label');
+    const THRESHOLD = 70;   // これ以上引いたら更新
+    let startY = null, pull = 0, busy = false;
+    const atTop = () => (document.scrollingElement || document.documentElement).scrollTop <= 0;
+    const sheetOpen = () => document.getElementById('sheet').classList.contains('on') || document.getElementById('menu').classList.contains('on');
+    const show = y => { ptr.style.transition = 'none'; ptr.style.transform = `translateY(${Math.min(y, 90) - 60}px)`; };
+    const hide = () => { ptr.style.transition = ''; ptr.style.transform = 'translateY(-60px)'; ptr.classList.remove('ready', 'loading'); };
+
+    document.addEventListener('touchstart', e => {
+      if (busy || sheetOpen() || !atTop() || e.touches.length !== 1) { startY = null; return; }
+      startY = e.touches[0].clientY; pull = 0;
+    }, { passive: true });
+
+    document.addEventListener('touchmove', e => {
+      if (startY === null) return;
+      pull = (e.touches[0].clientY - startY) * 0.5; // 引いた距離の半分だけ動かして重さを出す
+      if (pull <= 0 || !atTop()) { pull = 0; hide(); return; }
+      if (e.cancelable) e.preventDefault();          // 画面ごとスクロールしないようにする
+      show(pull);
+      ptr.classList.toggle('ready', pull >= THRESHOLD);
+      label.textContent = pull >= THRESHOLD ? '離して更新' : '引っ張って更新';
+    }, { passive: false });
+
+    document.addEventListener('touchend', () => {
+      if (startY === null) return;
+      startY = null;
+      if (pull < THRESHOLD) { hide(); return; }
+      busy = true;
+      ptr.classList.remove('ready'); ptr.classList.add('loading');
+      label.textContent = '更新中…';
+      ptr.style.transition = ''; ptr.style.transform = 'translateY(0)';
+      loadThen(true, () => { busy = false; hide(); }, true); // 引っ張って更新：船の情報だけ取り直す（天気は直近の分）
+    });
+  })();
+
+  // 読み込みが終わったら（成功でも失敗でも）callback を呼ぶ
+  function loadThen(force, callback, keepWeather) {
+    if (loading) { callback(); return; }
+    loading = true;
+    // 表示中のデータはそのまま。取得時刻の横の札だけ「更新中…」にする（データがまだないときは見出しの下に出す）
+    const ago = document.getElementById('ago');
+    if (ago) { ago.textContent = '更新中…'; ago.className = 'ago'; }
+    else document.getElementById('meta').textContent = '読み込み中…';
+    const done = () => { loading = false; lastLoaded = Date.now(); callback(); };
+    google.script.run
+      .withSuccessHandler(d => {
+        // 描くときにエラーが出ても「読み込み中」のまま止まらないように、必ず done() まで進める
+        try { render(d); try { localStorage.setItem('shipData', JSON.stringify(d)); } catch (e) {} }
+        catch (e) { showRenderError('全体', e); }
+        done();
+      })
+      .withFailureHandler(e => { fail(e); done(); })
+      .getShipData(!!force, !!keepWeather);
+  }
+
+  // ---- 自動更新：開いている間は5分おき。別のアプリから戻ってきたときも、1分以上たっていれば取り直す
+  const AUTO_MS = 5 * 60 * 1000;
+  setInterval(() => {
+    if (document.visibilityState === 'visible' && !document.getElementById('sheet').classList.contains('on') && !berthFocus
+        && Date.now() - lastLoaded >= AUTO_MS - 5000) load(false); // 裏の自動更新の結果を使う（7分より古ければ取り直す）
+  }, 30 * 1000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && Date.now() - lastLoaded > 60 * 1000) load(false);
+  });
+
+  // ---- 開いたらすぐ表示：ページに埋め込んだ直近の結果 → なければこの端末に残した前回の結果
+  (function () {
+    let first = null;
+    try { first = null; } catch (e) { first = null; }
+    if (!first) { try { first = JSON.parse(localStorage.getItem('shipData') || 'null'); } catch (e) { first = null; } }
+    if (first) { try { render(first); } catch (e) { console.error(e); first = null; /* 形が古ければ無視して、すぐ最新を取り直す */ } }
+    // 古ければ裏で最新を取る（画面は表示したまま）
+    //   7分以内：裏の自動更新（5分ごと）の結果なので取りに行かない
+    //   7〜20分：サーバーの保存済みの結果を見に行く（新しければすぐ返る）
+    //   20分より古い：裏の自動更新が止まっているかもしれないので取り直す
+    const age = first && first.generatedMs ? Date.now() - first.generatedMs : Infinity;
+    if (age > 7 * 60 * 1000) load(!!first && age > 20 * 60 * 1000);
+    else lastLoaded = Date.now() - age;
+  })();
+</script>
+</body>
+</html>
