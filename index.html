@@ -32,6 +32,32 @@
   }
   window.google = { script: { get run() { return runner(null, null); } } };
 })();
+// 画面のファイルを iPhone に残す（sw.js）。新しい画面を取り込んだら、上に「新しい画面があります」を出す
+(function () {
+  if (!('serviceWorker' in navigator)) return;
+  // 開いた直後（5秒以内で、まだ画面にさわっていない）なら、自動で新しい画面に切り替える
+  var touched = false;
+  ['touchstart', 'pointerdown', 'keydown', 'wheel'].forEach(function (t) { window.addEventListener(t, function () { touched = true; }, { passive: true, capture: true }); });
+  navigator.serviceWorker.addEventListener('message', function (e) {
+    if (!e.data || e.data.type !== 'updated' || document.getElementById('sw-upd')) return;
+    var last = 0;
+    try { last = Number(sessionStorage.getItem('swReload') || 0); } catch (x) {}
+    if (!touched && performance.now() < 5000 && Date.now() - last > 15000) {   // 続けて何度もやり直さないように
+      try { sessionStorage.setItem('swReload', String(Date.now())); } catch (x) {}
+      location.reload();
+      return;
+    }
+    var b = document.createElement('button');
+    b.id = 'sw-upd'; b.type = 'button';
+    b.textContent = '新しい画面があります（押すと切り替え）';
+    b.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom) + 16px);z-index:9999;white-space:nowrap;'
+      + 'padding:12px 18px;border:0;border-radius:999px;background:#1f5fa8;color:#fff;font-size:14px;font-weight:700;'
+      + 'box-shadow:0 4px 14px rgba(0,0,0,.25);font-family:inherit';
+    b.onclick = function () { location.reload(); };
+    (document.body || document.documentElement).appendChild(b);
+  });
+  window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+})();
 </script>
 <style>
   :root {
