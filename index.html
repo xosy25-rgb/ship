@@ -141,12 +141,14 @@
   nav button.on { color: var(--accent); border-bottom-color: var(--accent); }
   nav .count { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px;
     background: var(--accent-soft); color: var(--accent); font-size: 12px; line-height: 20px; }
-  /* 2段：上は「本日」（横いっぱい）、下は今までの港のタブ */
-  nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; row-gap: 2px; }
-  nav button[data-tab="td"] { grid-column: 1 / -1; grid-row: 2; padding: 7px 4px 6px; border: 1px solid var(--line); border-radius: 10px;
+  /* 2段：上は今までの港のタブ、下は「本日」「明日」（半分ずつ） */
+  nav { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; row-gap: 2px; }
+  nav button { grid-row: 1; grid-column: span 2; }
+  nav button[data-tab="td"], nav button[data-tab="tm"] { grid-row: 2; grid-column: 1 / 4; padding: 7px 4px 6px; border: 1px solid var(--line); border-radius: 10px;
     background: var(--card, #fff); margin: 6px 0 4px; }
-  nav button[data-tab="td"].on { background: var(--accent); color: #fff; border-color: var(--accent); }
-  nav button[data-tab="td"].on .count { background: rgba(255,255,255,.25); color: #fff; }
+  nav button[data-tab="tm"] { grid-column: 4 / 7; }
+  nav button[data-tab="td"].on, nav button[data-tab="tm"].on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  nav button[data-tab="td"].on .count, nav button[data-tab="tm"].on .count { background: rgba(255,255,255,.25); color: #fff; }
 
   main { padding: 12px 16px 40px; max-width: 720px; margin: 0 auto; }
   .panel { display: none; }
@@ -526,6 +528,7 @@
   <div class="meta" id="meta">読み込み中…</div>
   <nav>
     <button data-tab="td">本日<span class="count" id="c-td">-</span></button>
+    <button data-tab="tm">明日<span class="count" id="c-tm">-</span></button>
     <button data-tab="hh" class="on">東播磨<span class="count" id="c-hh">-</span></button>
     <button data-tab="hm">姫路<span class="count" id="c-hm">-</span></button>
     <button data-tab="lpg">水島<span class="count" id="c-lpg">-</span></button>
@@ -557,6 +560,7 @@
   <div id="errors"></div>
   <section class="panel on" id="p-hh"><div class="loading">読み込み中…</div></section>
   <section class="panel" id="p-td"><div class="loading">読み込み中…</div></section>
+  <section class="panel" id="p-tm"><div class="loading">読み込み中…</div></section>
   <section class="panel" id="p-hm"><div class="loading">読み込み中…</div></section>
   <section class="panel" id="p-lpg"><div class="loading">読み込み中…</div></section>
 </main>
@@ -581,7 +585,7 @@
   document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
   // 横にスワイプしてタブを切り替える（左へ → 水島、右へ → 播磨）
   (function () {
-    const TABS = ['td', 'hh', 'hm', 'lpg'];
+    const TABS = ['td', 'hh', 'hm', 'lpg']; // 東播磨から右へスワイプ → 本日（明日タブはスワイプでは行かない。ボタンだけ）
     let sx = null, sy = 0, st = 0;
     document.addEventListener('touchstart', e => {
       const t = e.target;
@@ -600,6 +604,7 @@
         if (menuView === 'kaikyoku') setKaikyoku(dx < 0 ? 'normal' : 'eco');
         return;
       }
+      if (TABS.indexOf(curTab) < 0) return; // 明日タブを開いているときはスワイプで切り替えない
       const i = TABS.indexOf(curTab) + (dx < 0 ? 1 : -1);
       if (i >= 0 && i < TABS.length) showTab(TABS[i]);
     }, { passive: true });
@@ -1034,6 +1039,7 @@
     try { renderHarima(data.harima || [], data.tows || [], currentSettings); } catch (e) { showRenderError('播磨', e); }
     try { renderMizushima(data.lpg || [], currentSettings); } catch (e) { showRenderError('水島', e); }
     try { renderToday(data); } catch (e) { showRenderError('本日', e); }
+    try { renderTomorrow(data); } catch (e) { showRenderError('明日', e); }
   }
   // ---- 本日タブ：3つの港の今日の入港・出港を時刻順に1行ずつ（済んだ分はたたむ・「今」の線・1時間以内は強調）
   // 本日タブの行を押したら、その港のタブに切り替えて同じ船の行まで動かす（少しのあいだ枠で目立たせる）
@@ -1053,6 +1059,27 @@
   }
   let tdPastOpen = false, tdLast = null;
   function toggleTodayPast() { tdPastOpen = !tdPastOpen; if (tdLast) renderToday(tdLast); }
+  // 本日・明日タブの1行（時刻・入港／出港・港・船名・行き先）。押すとその港のタブの同じ船へ
+  const tdHhmm = ms => { const t = new Date(ms); return `${t.getHours()}:${String(t.getMinutes()).padStart(2, '0')}`; };
+  function tdRow(e, now) {
+    const PCLS = { '東播磨': 'p-hh', '姫路': 'p-hm', '飾磨': 'p-skm', '水島': 'p-mz' };
+    return `<div class="tdr ${e.io}${e.ms < now ? ' done' : e.ms - now < 3600000 ? ' soon' : ''}" data-port="${esc(e.port)}" data-ship="${esc(e.ship)}" onclick="jumpToShip(this)">`
+      + `<span class="tdt">${tdHhmm(e.ms)}${e.io === 'in' ? `<small>${esc(e.via || '沖着')}</small>` : ''}</span>`
+      + `<span class="tdio">${e.io === 'in' ? '入港' : '出港'}</span>`
+      + `<span class="tdp ${PCLS[e.port] || ''}">${esc(e.port)}${e.berth ? ' ' + esc(e.berth) : ''}</span>`
+      + `<span class="tdn">${esc(e.ship)}</span>`
+      + `<span class="tds">${e.west ? '<span class="kind west wgo">西行</span>' : ''}${e.pr ? '<span class="psrc">PR</span>' : ''}${e.sub ? esc(e.sub) : ''}</span></div>`;
+  }
+  // ---- 明日タブ：東播磨・姫路（飾磨）の明日の入港・出港を時刻順に（サーバーで作る）
+  function renderTomorrow(data) {
+    const d1 = new Date(); d1.setHours(0, 0, 0, 0); d1.setDate(d1.getDate() + 1);
+    const t1 = d1.getTime(), t2 = new Date(d1.getFullYear(), d1.getMonth(), d1.getDate() + 1).getTime();
+    const ev = (data.tomorrow || []).filter(e => e.ms >= t1 && e.ms < t2).sort((a, b) => a.ms - b.ms);
+    document.getElementById('p-tm').innerHTML = `<div class="port"><h2>⏱ 明日の動き<span class="tdday">${d1.getMonth() + 1}/${d1.getDate()}(${WEEK[d1.getDay()]})</span></h2>`
+      + (ev.length ? ev.map(e => tdRow(e, 0)).join('') : '<div class="empty">明日の予定なし（まだ出ていない）</div>')
+      + `</div><p class="note">東播磨・姫路（飾磨）の明日の入港と出港を時刻順に（水島は出さない）。今わかっている予定だけで、時刻はこれから変わることがあります。時刻の下の「明石」「備讃」「沖着」は本日タブと同じ。</p>`;
+    document.getElementById('c-tm').textContent = ev.length;
+  }
   function renderToday(data) {
     tdLast = data;
     const now = Date.now();
@@ -1064,14 +1091,8 @@
     // 今日の入港・出港はサーバーで作る（終わった分も、その日のあいだ記録してある）
     (data.today || []).forEach(e => { if (isToday(e.ms)) push(e); });
     ev.sort((a, b) => a.ms - b.ms);
-    const hhmm = ms => { const t = new Date(ms); return `${t.getHours()}:${String(t.getMinutes()).padStart(2, '0')}`; };
-    const PCLS = { '東播磨': 'p-hh', '姫路': 'p-hm', '飾磨': 'p-skm', '水島': 'p-mz' };
-    const row = e => `<div class="tdr ${e.io}${e.ms < now ? ' done' : e.ms - now < 3600000 ? ' soon' : ''}" data-port="${esc(e.port)}" data-ship="${esc(e.ship)}" onclick="jumpToShip(this)">`
-      + `<span class="tdt">${hhmm(e.ms)}${e.io === 'in' ? `<small>${esc(e.via || '沖着')}</small>` : ''}</span>`
-      + `<span class="tdio">${e.io === 'in' ? '入港' : '出港'}</span>`
-      + `<span class="tdp ${PCLS[e.port] || ''}">${esc(e.port)}${e.berth ? ' ' + esc(e.berth) : ''}</span>`
-      + `<span class="tdn">${esc(e.ship)}</span>`
-      + `<span class="tds">${e.west ? '<span class="kind west wgo">西行</span>' : ''}${e.pr ? '<span class="psrc">PR</span>' : ''}${e.sub ? esc(e.sub) : ''}</span></div>`;
+    const row = e => tdRow(e, now);
+    const hhmm = tdHhmm;
     const past = ev.filter(e => e.ms < now), next = ev.filter(e => e.ms >= now);
     const t = new Date();
     document.getElementById('p-td').innerHTML = `<div class="port"><h2>⏱ 本日の動き<span class="tdday">${t.getMonth() + 1}/${t.getDate()}(${WEEK[t.getDay()]})</span></h2>`
