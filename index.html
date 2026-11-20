@@ -316,6 +316,9 @@
   .tdio { width: 2.9em; text-align: center; box-sizing: content-box; }
   .tdp { width: 3.3em; text-align: center; box-sizing: content-box; }
   .tdr { cursor: pointer; }
+  .tdes { flex: none; box-sizing: border-box; width: calc(2.9em + 3.3em + 26px); /* 入港の札（2.9em＋左右5px）＋港の札（3.3em＋左右5px）＋間6px */ text-align: center;
+    font-size: 11px; font-weight: 700; border-radius: 4px; padding: 1px 5px; background: #fde2ec; color: #a3285a; }
+  @media (prefers-color-scheme: dark) { .tdes { background: #3a1626; color: #f29ac0; } }
   .ship.jumped { animation: jumped 1s ease-out; }
   @keyframes jumped { 0%, 60% { box-shadow: inset 0 0 0 3px var(--accent); background: var(--accent-soft); } 100% { box-shadow: inset 0 0 0 0 transparent; } }
   /* 開局時間（目安表） */
@@ -585,7 +588,8 @@
   document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
   // 横にスワイプしてタブを切り替える（左へ → 水島、右へ → 播磨）
   (function () {
-    const TABS = ['td', 'hh', 'hm', 'lpg']; // 東播磨から右へスワイプ → 本日（明日タブはスワイプでは行かない。ボタンだけ）
+    // スワイプで行き来するのは同じ段のタブどうしだけ：上の段（東播磨・姫路・水島）、下の段（本日・明日）
+    const SWIPE_GROUPS = [['hh', 'hm', 'lpg'], ['td', 'tm']];
     let sx = null, sy = 0, st = 0;
     document.addEventListener('touchstart', e => {
       const t = e.target;
@@ -604,8 +608,9 @@
         if (menuView === 'kaikyoku') setKaikyoku(dx < 0 ? 'normal' : 'eco');
         return;
       }
-      if (TABS.indexOf(curTab) < 0) return; // 明日タブを開いているときはスワイプで切り替えない
-      const i = TABS.indexOf(curTab) + (dx < 0 ? 1 : -1);
+      const TABS = SWIPE_GROUPS.find(g => g.includes(curTab));
+      if (!TABS) return;
+      const i = TABS.indexOf(curTab) + (dx < 0 ? 1 : -1); // 左へスワイプ → 右隣のタブ
       if (i >= 0 && i < TABS.length) showTab(TABS[i]);
     }, { passive: true });
   })();
@@ -841,6 +846,7 @@
     days.forEach(d => d.ships.sort((a, b) => a.sortKey - b.sortKey));
     return ps.filter(p => p !== skm).map(p => p === hime ? Object.assign({}, hime, { days: days }) : p);
   }
+  let currentEscorts = [];
   function renderHarima(ports, tows, st) {
     Object.keys(HARIMA_TABS).forEach(key => {
       const names = HARIMA_TABS[key];
@@ -882,7 +888,16 @@
         + `<div class="row2" style="margin:6px 0 0"><span>${esc(s.type || '曳航船')}</span>${s.gt !== '' ? `<span>${num(s.gt)}GT</span>` : ''}`
         + `${s.towLen || s.towObj ? `<span>曳航長 ${esc(s.towLen)}${s.towObj ? '・' + esc(s.towObj) : ''}</span>` : ''}</div>${chgLines(s)}</div>`
       ).join(''))).join('');
+    // 明石E/S（東播磨タブだけ。ENERGY が付くガスタンカーがあるときだけ出す）
+    const es = key === 'hh' ? (currentEscorts || []).filter(d => d.ships.length) : [];
+    const esHtml = !es.length ? '' : `<div class="port"><h2>🛡 明石E/S</h2>` + es.map(d => dayGroup(d, es,
+      dayHead(d) + d.ships.map(s =>
+        `<div class="ship" data-ship="${esc(s.ship)}"><div class="row1"><span class="name">${esc(s.ship)}`
+        + `<span class="bisan">明石 ${esc(s.akashi)}（${esc(s.from)}→${esc(s.to)}）</span></span></div>`
+        + `<div class="row2" style="margin:6px 0 0"><span>${esc(s.type)}</span>${s.length ? `<span>${esc(s.length)}m</span>` : ''}${s.gt !== '' ? `<span>${num(s.gt)}GT</span>` : ''}</div></div>`
+      ).join(''))).join('') + `</div>`;
     document.getElementById('p-' + key).innerHTML = html
+      + esHtml
       + `<div class="port"><h2>⛓ 曳航船</h2>${towBody}</div>`
       + `<p class="note">強風注意報（黄）・暴風警報（赤）が出ている港と、風速が20m/s以上の港（赤）は、札の中に今の風も出す（気象庁アメダス：東播磨は明石、姫路は姫路、水島は倉敷。飾磨は出さない。矢印は風が吹いていく向き）。明石＝明石海峡航路に入る予定時刻。備讃＝備讃瀬戸東航路の地蔵埼の予定時刻（明石を通らず西から来て西へ出る船）。入港はガスタンカー（＋${hm(st.gasArriveAddMin)}）と自動車船（＋${hm(st.carArriveAddMin)}）と姫路向けタンカー（5万GT未満・＋${hm(st.tankerArriveAddMin != null ? st.tankerArriveAddMin : 120)}。日没後に着く場合は「明日？」。着桟はおよそ24時間なので、出港予定が出たら入港日＝出港日−1日。入港日の日の出までは「入港」の札のまま）だけ計算し、30分単位の近い時刻に丸め、明石を通った日の日没後に着く場合は翌日扱い（赤字）。`
       + `出港＝明石−${hm(st.harimaDepartMinusMin)}（自動車船 −${hm(st.harimaCarDepartMinusMin)}、W岸 −${hm(st.harimaWDepartMinusMin || 120)}）。明石を通らず西へ出る船は、備讃瀬戸東航路に地蔵埼から入る時刻−${hm(st.harimaBisanMinusMin)}（「西行」の印）。「在港」は入港済みの船（明石＋${hm(st.harimaAkashiStayMin)}、西からは備讃＋${hm(st.harimaBisanStayMin)}を過ぎたら）。出港予定がまだ出ていない入港済みの船は、入港から7日間「在港・出港 未定」で本日の欄に残す。「沖待ち」は入港済みで出港予定がまだない船。「西から」は備讃瀬戸を通って西から来る（来た）船（入港時間の計算はしない）。⚙で変更可。</p>`;
@@ -1036,6 +1051,7 @@
     currentWindHistory = data.windHistory || {};
     berthOptions = data.berthOptions || {};
     // タブごとに描く。1つのタブでエラーが出ても、ほかのタブと読み込みは止めない（エラーは上に出す）
+    currentEscorts = data.escorts || [];
     try { renderHarima(data.harima || [], data.tows || [], currentSettings); } catch (e) { showRenderError('播磨', e); }
     try { renderMizushima(data.lpg || [], currentSettings); } catch (e) { showRenderError('水島', e); }
     try { renderToday(data); } catch (e) { showRenderError('本日', e); }
@@ -1064,9 +1080,10 @@
   function tdRow(e, now) {
     const PCLS = { '東播磨': 'p-hh', '姫路': 'p-hm', '飾磨': 'p-skm', '水島': 'p-mz' };
     return `<div class="tdr ${e.io}${e.ms < now ? ' done' : e.ms - now < 3600000 ? ' soon' : ''}" data-port="${esc(e.port)}" data-ship="${esc(e.ship)}" onclick="jumpToShip(this)">`
-      + `<span class="tdt">${tdHhmm(e.ms)}${e.io === 'in' ? `<small>${esc(e.via || '沖着')}</small>` : ''}</span>`
-      + `<span class="tdio">${e.io === 'in' ? '入港' : '出港'}</span>`
-      + `<span class="tdp ${PCLS[e.port] || ''}">${esc(e.port)}${e.berth ? ' ' + esc(e.berth) : ''}</span>`
+      + `<span class="tdt">${tdHhmm(e.ms)}${e.io === 'in' || e.io === 'es' ? `<small>${esc(e.via || '沖着')}</small>` : ''}</span>`
+      + (e.io === 'es' ? `<span class="tdes">明石E/S</span>`   // 入港／出港と港の2つの札の幅をまとめて使う
+        : `<span class="tdio">${e.io === 'in' ? '入港' : '出港'}</span>`
+        + `<span class="tdp ${PCLS[e.port] || ''}">${esc(e.port)}${e.berth ? ' ' + esc(e.berth) : ''}</span>`)
       + `<span class="tdn">${esc(e.ship)}</span>`
       + `<span class="tds">${e.west ? '<span class="kind west wgo">西行</span>' : ''}${e.pr ? '<span class="psrc">PR</span>' : ''}${e.sub ? esc(e.sub) : ''}</span></div>`;
   }
