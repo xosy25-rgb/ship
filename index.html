@@ -394,6 +394,15 @@
     .times.mz .lout { background: #3d2415; color: #f29a62; }
   }
   .times.mz .psrc { font-size: .68em; }
+  /* 東播磨・姫路：入港時刻が出る船も水島と同じ札（入港 緑／出港 オレンジ／入港 済み） */
+  .times.hz .lbl { display: inline-block; font-size: .78em; font-weight: 700; border-radius: 4px; padding: 1px 4px; margin-right: 4px; vertical-align: 1px; color: var(--sub); }
+  .times.hz .lin { background: #dcefe3; color: #1d7a45; }
+  .times.hz .lout { background: #fde4d4; color: #b4501a; }
+  .times.hz .hdone { color: var(--sub); font-size: .85em; font-weight: 700; }
+  @media (prefers-color-scheme: dark) {
+    .times.hz .lin { background: #173323; color: #5fd08f; }
+    .times.hz .lout { background: #3d2415; color: #f29a62; }
+  }
   .times.mz .kind { font-size: .8em; padding: 1px 4px; margin-left: 2px; }
   .times.mz .nights { font-size: .76em; }
   .dgrp.today .times.mz { font-size: 14px; }
@@ -855,6 +864,23 @@
       renderHarimaTab(ps, ts, st, key);
     });
   }
+  // 東播磨・姫路：入港時刻が出る船の入港が終わったか（入港の文字は時刻だけなので、日付は明石を通る日から決める）
+  function hzArrived(s) {
+    if (String(s.arrive) === '在港') return true;
+    const m = /(\d{1,2}):(\d{2})$/.exec(String(s.arrive));
+    if (!m || !s.atStrait) return false;
+    const a = new Date(s.atStrait); a.setHours(Number(m[1]), Number(m[2]), 0, 0);
+    let ms = a.getTime(); if (ms < s.atStrait) ms += 86400000;
+    return ms <= Date.now();
+  }
+  // 入港・出港の欄（入港時刻が出る船）：これから入港 → 「入港」だけ緑、入港済み → 「入港 済み」で「出港」だけオレンジ
+  function hzTimes(s) {
+    const done = hzArrived(s);
+    return `<div class="times hz${s.gas ? ' gas' : ''}" style="margin-left:0">`
+      + (done ? `<span><span class="lbl">入港</span><span class="hdone">済み</span></span>`
+              : `<span><span class="lbl lin">入港</span><b${s.arriveLate ? ' class="late"' : ''}>${esc(s.arrive)}</b></span>`)
+      + `<span><span class="lbl${done ? ' lout' : ''}">出港</span><b>${esc(s.depart)}</b>`;
+  }
   function renderHarimaTab(ports, tows, st, key) {
     let count = 0;
     const html = ports.map(p => {
@@ -873,7 +899,9 @@
           return `<div class="ship${s.past ? ' past' : ''}${chgClass(s)}" data-ship="${esc(s.ship)}">`
                + `<div class="row1"><span class="name">${s.past ? '<span class="kind tout">出港済</span>' : s.tag === 'west' ? '<span class="kind west">西から</span>' : s.tag === 'stay' ? (s.depart === '未定' ? '<span class="kind wait">沖待ち</span>' : '<span class="kind">在港</span>') : '<span class="kind tin">入港</span>'}`
                + `${s.fromWest && s.tag !== 'west' && !s.past ? '<span class="kind west">西から</span>' : ''}${s._port === '飾磨' ? '<span class="kind skm">飾磨</span>' : ''}${shipLink(s)}<span class="bisan">${akashi}</span></span>${chgBadge(s)}${badges}</div>`
-               + `<div class="times${s.gas ? ' gas' : ''}" style="margin-left:0">${s.showArrive ? `<span>入港 <b${s.arriveLate ? ' class="late"' : ''}>${esc(s.arrive)}</b></span>` : ''}<span>出港 <b>${s.past ? '出港済み' : esc(s.depart)}</b>${s.departSrc === 'bisan' && !s.past ? '<span class="kind west wgo">西行</span>' : ''}</span>${s.nights && !s.past ? `<span class="nights">${esc(s.nights)}</span>` : ''}${berthSelect(s._port || p.port, s)}</div>`
+               + (s.showArrive && !s.past ? hzTimes(s)   // 入港・出港の両方が出る船：水島タブと同じく、入港が終われば「入港 済み」＋出港の札に色
+                 : `<div class="times${s.gas ? ' gas' : ''}" style="margin-left:0"><span>出港 <b>${s.past ? '出港済み' : esc(s.depart)}</b>`)
+               + `${s.departSrc === 'bisan' && !s.past ? '<span class="kind west wgo">西行</span>' : ''}</span>${s.nights && !s.past ? `<span class="nights">${esc(s.nights)}</span>` : ''}${berthSelect(s._port || p.port, s)}</div>`
                + `<div class="row2" style="margin:6px 0 0"><span>${info}</span></div>${chgLines(s)}</div>`;
         }).join(''))
       ).join('');
@@ -918,7 +946,7 @@
       + `<span class="bisan">備讃 ${esc(s.time)}（${esc(s.bisanText != null ? s.bisanText : (s.kind === 'stay' && s.inPoint === s.berth ? '→' + s.outPoint : s.inPoint))}）</span></span>`
       + `${chgBadge(s)}`
       + `${showBerth ? `<span class="badge bsize" style="text-decoration:none;margin-left:6px">${esc(s.berth)}</span>` : ''}</div>`
-      + `<div class="times mz" style="margin-left:0"><span class="tin">${mizArriveHtml(s)}</span><span class="tout"><span class="lbl${mizArrived(s) ? ' lout' : ''}">出港</span><b>${esc(s.depart)}</b>`
+      + `<div class="times mz${gasKind ? ' gas' : ''}" style="margin-left:0"><span class="tin">${mizArriveHtml(s)}</span><span class="tout"><span class="lbl${mizArrived(s) ? ' lout' : ''}">出港</span><b>${esc(s.depart)}</b>`
       + `${s.departSrc === 'radio' && s.depart !== '未定' ? '<span class="psrc">PR</span>' : ''}`  // PR＝ポートラジオの時刻
       + `${s.toWest && s.depart !== '未定' ? '<span class="kind west wgo">西行</span>' : ''}</span>`  // 西行は出港時間の右
       + `${s.nights && gasKind === 'LPG' ? `<span class="nights">${esc(s.nights)}</span>` : ''}</div>`  // 泊数は LPG（ガスタンカー）だけ
