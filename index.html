@@ -398,7 +398,11 @@
   .times.hz .lbl { display: inline-block; font-size: .78em; font-weight: 700; border-radius: 4px; padding: 1px 4px; margin-right: 4px; vertical-align: 1px; color: var(--sub); }
   .times.hz .lin { background: #dcefe3; color: #1d7a45; }
   .times.hz .lout { background: #fde4d4; color: #b4501a; }
-  .times.hz .hdone { color: var(--sub); font-size: .85em; font-weight: 700; }
+  .times.hz .hdone, .times.mz .hdone { color: var(--sub); font-size: .85em; font-weight: 700; }
+  /* 水島の港内シフト */
+  .kind.shift { background: #ece6fb; color: #5a3fb0; }
+  .times.mz .lshift { background: #ece6fb; color: #5a3fb0; }
+  @media (prefers-color-scheme: dark) { .kind.shift, .times.mz .lshift { background: #2a2342; color: #b9a6f5; } }
   @media (prefers-color-scheme: dark) {
     .times.hz .lin { background: #173323; color: #5fd08f; }
     .times.hz .lout { background: #3d2415; color: #f29a62; }
@@ -1007,10 +1011,20 @@
       + `<div class="swappart${chgClass(w.in)}"><div class="swaplabel">入港</div>${mizInner(w.in, false)}</div>`
       + `</div>`;
   }
+  // 水島の港内シフト（ASE → MPG など）の1枚
+  function shiftCard(s) {
+    return `<div class="ship${s.done ? ' past' : ''}"><div class="row1"><span class="name"><span class="kind shift">シフト</span>${esc(s.ship)}`
+      + `<span class="bisan">備讃 ${esc(s.time)}（${esc(s.from)}→${esc(s.to)}）</span></span>`
+      + `<span class="badge bsize" style="text-decoration:none;margin-left:6px">${esc(s.from)}→${esc(s.to)}</span></div>`
+      + `<div class="times mz" style="margin-left:0"><span><span class="lbl${s.done ? '' : ' lshift'}">シフト</span>`
+      + (s.done ? '<span class="hdone">済み</span>' : `<b>${esc(s.time)}</b>`) + `</span><span>${esc(s.from)} → ${esc(s.to)}</span></div>`
+      + `<div class="row2" style="margin:6px 0 0"><span>${esc(s.type)}</span>${s.gt !== '' ? `<span>${num(s.gt)}GT</span>` : ''}${s.length ? `<span>${esc(s.length)}m</span>` : ''}</div></div>`;
+  }
   function shipRows(days) {
     return days.map(d => dayGroup(d, days,
       dayHeadSun(d, '水島', days) + d.ships.map(s => s.kind === 'swap'
         ? swapCard(s)
+        : s.kind === 'shift' ? shiftCard(s)
         : `<div class="ship${chgClass(s)}">${mizInner(s, true)}</div>`
       ).join(''))
     ).join('');
@@ -1024,7 +1038,7 @@
     // 水島タブが見えていないときは幅が測れないので、タブを開いたときにも合わせる（showTab）
     requestAnimationFrame(fitMizTimes);
     const names = new Set();
-    lpg.forEach(d => d.ships.forEach(s => (s.kind === 'swap' ? [s.out, s.in] : [s]).forEach(x => names.add(x.ship + '|' + x.berth))));
+    lpg.forEach(d => d.ships.forEach(s => s.kind === 'shift' ? null : (s.kind === 'swap' ? [s.out, s.in] : [s]).forEach(x => names.add(x.ship + '|' + x.berth)))); // シフトは数えない（同じ船がもう出ている）
     document.getElementById('c-lpg').textContent = names.size;
   }
 
