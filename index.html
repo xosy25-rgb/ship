@@ -972,7 +972,8 @@
   function berthLabel(s) {
     const sh = s.shifts || [];
     if (!sh.length) return s.berth;
-    if (sh.every(x => x.done)) return sh[sh.length - 1].to;
+    if (sh.every(x => x.done)) return sh[sh.length - 1].to;                   // シフトが済んだらシフト後の岸壁だけ
+    if (s.role === 'in' || s.role === 'both') return s.berth;                // 入港の日の欄は入る岸壁だけ（ASE）
     return [s.berth].concat(sh.map(x => x.to)).join('→');
   }
   function mizTimesHtml(s, gasKind) {
@@ -983,7 +984,7 @@
     const noDow = t => String(t).replace(/\([日月火水木金土]\)/, '');   // 一列に収めるため曜日は省く
     //   入港の日の欄（出港がまだ先・未定）は、入港前でも次の動きとしてシフトを出す
     const out = next && (arrived || s.role !== 'out')
-      ? `<span class="lbl${arrived ? ' lshift' : ''}">シフト</span><b>${esc(noDow(next.time))}</b>`
+      ? `<span class="lbl lshift">シフト</span><b>${esc(noDow(next.time))}</b><span class="sto">→${esc(next.to)}</span>`
       : `<span class="lbl${arrived ? ' lout' : ''}">出港</span><b>${esc(s.depart)}</b>`
         + `${s.departSrc === 'radio' && s.depart !== '未定' ? '<span class="psrc">PR</span>' : ''}`  // PR＝ポートラジオの時刻
         + `${s.toWest && s.depart !== '未定' ? '<span class="kind west wgo">西行</span>' : ''}`;    // 西行は出港時間の右
