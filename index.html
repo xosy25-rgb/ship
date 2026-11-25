@@ -401,6 +401,19 @@
   .times.hz .hdone, .times.mz .hdone { color: var(--sub); font-size: .85em; font-weight: 700; }
   /* 水島の港内シフト */
   .kind.shift { background: #ece6fb; color: #5a3fb0; }
+  .times.mz.hasshift { border-radius: 8px 8px 0 0; padding-bottom: 2px; }
+  .shiftln { display: flex; align-items: center; gap: 5px; margin: 0; padding: 0 7px 6px; font-size: 12px; color: var(--sub);
+    background: var(--accent-soft); border-radius: 0 0 8px 8px; white-space: nowrap; }
+  .shiftln.gas { background: var(--gas-soft); }
+  .shiftln + .shiftln { border-radius: 0 0 8px 8px; }
+  .shiftln .lbl { display: inline-block; font-size: .85em; font-weight: 700; border-radius: 4px; padding: 1px 4px; margin-right: 0; color: var(--sub); }
+  .shiftln .lshift { background: #ece6fb; color: #5a3fb0; }
+  .shiftln b { font-size: 1.05em; }
+  .shiftln .psrc { font-size: .8em; }
+  .times.mz .sto, .shiftln .sto { color: var(--sub); font-size: .85em; margin-left: 3px; }
+  @media (prefers-color-scheme: dark) { .shiftln .lshift { background: #2a2342; color: #b9a6f5; } }
+  .shiftln b { color: var(--text); }
+  .shiftln .sdone { font-weight: 700; }
   .times.mz .lshift { background: #ece6fb; color: #5a3fb0; }
   @media (prefers-color-scheme: dark) { .kind.shift, .times.mz .lshift { background: #2a2342; color: #b9a6f5; } }
   @media (prefers-color-scheme: dark) {
@@ -949,13 +962,33 @@
           : esc(s.ship))
       + `<span class="bisan">備讃 ${esc(s.time)}（${esc(s.bisanText != null ? s.bisanText : (s.kind === 'stay' && s.inPoint === s.berth ? '→' + s.outPoint : s.inPoint))}）</span></span>`
       + `${chgBadge(s)}`
-      + `${showBerth ? `<span class="badge bsize" style="text-decoration:none;margin-left:6px">${esc(s.berth)}</span>` : ''}</div>`
-      + `<div class="times mz${gasKind ? ' gas' : ''}" style="margin-left:0"><span class="tin">${mizArriveHtml(s)}</span><span class="tout"><span class="lbl${mizArrived(s) ? ' lout' : ''}">出港</span><b>${esc(s.depart)}</b>`
-      + `${s.departSrc === 'radio' && s.depart !== '未定' ? '<span class="psrc">PR</span>' : ''}`  // PR＝ポートラジオの時刻
-      + `${s.toWest && s.depart !== '未定' ? '<span class="kind west wgo">西行</span>' : ''}</span>`  // 西行は出港時間の右
-      + `${s.nights && gasKind === 'LPG' ? `<span class="nights">${esc(s.nights)}</span>` : ''}</div>`  // 泊数は LPG（ガスタンカー）だけ
+      + `${showBerth ? `<span class="badge bsize" style="text-decoration:none;margin-left:6px">${esc(berthLabel(s))}</span>` : ''}</div>`  // 港内シフトがこれからあるときだけ「ASE→MPG」、済んだらシフト後の岸壁だけ
+      + mizTimesHtml(s, gasKind)
       + `<div class="row2" style="margin:6px 0 0">${s.naoWait && s.waitFor ? `<span>${esc(s.waitFor)} の出港待ち</span>` : ''}<span>${esc(s.type || '船種不明')}</span>`
       + `${s.gt !== '' ? `<span>${num(s.gt)}GT</span>` : ''}${s.length ? `<span>${esc(s.length)}m</span>` : ''}</div>${chgLines(s)}`;
+  }
+  // 水島の入港・出港の欄
+  // 右上の岸壁：シフトのない船は入った岸壁。これからシフトがある船は「ASE→MPG」、シフトが全部済んだらシフト後の岸壁だけ
+  function berthLabel(s) {
+    const sh = s.shifts || [];
+    if (!sh.length) return s.berth;
+    if (sh.every(x => x.done)) return sh[sh.length - 1].to;
+    return [s.berth].concat(sh.map(x => x.to)).join('→');
+  }
+  function mizTimesHtml(s, gasKind) {
+    // いつもの1行：入港｜出港。入港が済んでいて、これから港内シフトがある船は、出港の札の場所を「シフト 時刻」にする
+    //   （シフトが済んだら、いつもの「出港 時刻」に戻る。シフトの岸壁は右上の「ASE→MPG」で見る）
+    const next = (s.shifts || []).find(x => !x.done);
+    const arrived = mizArrived(s);
+    const noDow = t => String(t).replace(/\([日月火水木金土]\)/, '');   // 一列に収めるため曜日は省く
+    const out = arrived && next
+      ? `<span class="lbl lshift">シフト</span><b>${esc(noDow(next.time))}</b>`
+      : `<span class="lbl${arrived ? ' lout' : ''}">出港</span><b>${esc(s.depart)}</b>`
+        + `${s.departSrc === 'radio' && s.depart !== '未定' ? '<span class="psrc">PR</span>' : ''}`  // PR＝ポートラジオの時刻
+        + `${s.toWest && s.depart !== '未定' ? '<span class="kind west wgo">西行</span>' : ''}`;    // 西行は出港時間の右
+    return `<div class="times mz${gasKind ? ' gas' : ''}" style="margin-left:0"><span class="tin">${mizArriveHtml(s)}</span>`
+      + `<span class="tout">${out}</span>`
+      + `${s.nights && gasKind === 'LPG' ? `<span class="nights">${esc(s.nights)}</span>` : ''}</div>`;  // 泊数は LPG（ガスタンカー）だけ
   }
   // 同じ岸壁の出入れ：出ていく船と入ってくる船を1枚のカードに
   // 水島：入港時間のすぐ右に、どこから入ってくるかを小さく（地蔵埼から＝ﾅﾍﾞ、二面島から＝交差部）
@@ -998,6 +1031,15 @@
       while (el.scrollWidth > el.clientWidth + 1 && size > 10) {
         size -= 0.5;
         el.style.fontSize = size + 'px';
+      }
+    });
+    // 港内シフトの行は、出港の札の左にそろえる
+    rows.forEach(el => {
+      const tout = el.querySelector('.tout');
+      let ln = el.nextElementSibling;
+      while (ln && ln.classList.contains('shiftln')) {
+        if (tout) ln.style.paddingLeft = Math.round(tout.getBoundingClientRect().left - el.getBoundingClientRect().left) + 'px';
+        ln = ln.nextElementSibling;
       }
     });
   }
