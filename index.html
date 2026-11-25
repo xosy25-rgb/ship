@@ -981,8 +981,9 @@
     const next = (s.shifts || []).find(x => !x.done);
     const arrived = mizArrived(s);
     const noDow = t => String(t).replace(/\([日月火水木金土]\)/, '');   // 一列に収めるため曜日は省く
-    const out = arrived && next
-      ? `<span class="lbl lshift">シフト</span><b>${esc(noDow(next.time))}</b>`
+    //   入港の日の欄（出港がまだ先・未定）は、入港前でも次の動きとしてシフトを出す
+    const out = next && (arrived || s.role !== 'out')
+      ? `<span class="lbl${arrived ? ' lshift' : ''}">シフト</span><b>${esc(noDow(next.time))}</b>`
       : `<span class="lbl${arrived ? ' lout' : ''}">出港</span><b>${esc(s.depart)}</b>`
         + `${s.departSrc === 'radio' && s.depart !== '未定' ? '<span class="psrc">PR</span>' : ''}`  // PR＝ポートラジオの時刻
         + `${s.toWest && s.depart !== '未定' ? '<span class="kind west wgo">西行</span>' : ''}`;    // 西行は出港時間の右
@@ -1062,9 +1063,14 @@
       + (s.done ? '<span class="hdone">済み</span>' : `<b>${esc(s.time)}</b>`) + `</span><span>${esc(s.from)} → ${esc(s.to)}</span></div>`
       + `<div class="row2" style="margin:6px 0 0"><span>${esc(s.type)}</span>${s.gt !== '' ? `<span>${num(s.gt)}GT</span>` : ''}${s.length ? `<span>${esc(s.length)}m</span>` : ''}</div></div>`;
   }
+  // 同じ日の欄に、そのシフトをもう出している船のカード（入港・出港の欄の「シフト」）があれば、シフトのカードは出さない
+  function shownShift(d, sh) {
+    return d.ships.some(c => (c.kind === 'swap' ? [c.out, c.in] : [c]).some(x => x && x.kind !== 'shift' && x.ship === sh.ship
+      && (x.shifts || []).some(y => y.ms === sh.shiftMs && !y.done)));
+  }
   function shipRows(days) {
     return days.map(d => dayGroup(d, days,
-      dayHeadSun(d, '水島', days) + d.ships.map(s => s.kind === 'swap'
+      dayHeadSun(d, '水島', days) + d.ships.filter(s => !(s.kind === 'shift' && shownShift(d, s))).map(s => s.kind === 'swap'
         ? swapCard(s)
         : s.kind === 'shift' ? shiftCard(s)
         : `<div class="ship${chgClass(s)}">${mizInner(s, true)}</div>`
